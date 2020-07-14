@@ -351,6 +351,7 @@ if(TARGET igl_tetgen)
     set_target_properties(tetgen PROPERTIES FOLDER 3rdparty/other)
 endif()
 
+set_target_properties(tinyxml2 PROPERTIES FOLDER 3rdparty/other)
 set_target_properties(geogram PROPERTIES FOLDER 3rdparty/other)
 set_target_properties(clipper_clipper PROPERTIES FOLDER 3rdparty/other)
 
