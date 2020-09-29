@@ -43,6 +43,12 @@ void BDF::rhs(Eigen::VectorXd &rhs) const
     }
 }
 
+void BDF::last_sol(Eigen::VectorXd &sol) const
+{
+    assert(history_.size() > 0);
+    sol = history_[0];
+}
+
 void BDF::new_solution(Eigen::VectorXd &rhs)
 {
     if (history_.size() >= order_)

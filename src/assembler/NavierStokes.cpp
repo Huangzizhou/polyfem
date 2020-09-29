@@ -131,7 +131,7 @@ namespace polyfem
 		if (full_gradient)
 			H = compute_N(vals, velocity, da) + compute_W(vals, velocity, da);
 		else
-			H = compute_N(vals, velocity, da);
+			H = compute_W(vals, velocity, da);
 
 		return H.transpose();
 	}

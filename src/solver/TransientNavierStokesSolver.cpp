@@ -25,13 +25,14 @@ TransientNavierStokesSolver::TransientNavierStokesSolver(const json &solver_para
 }
 
 void TransientNavierStokesSolver::minimize(
-	const State &state, const double alpha, const double dt, const Eigen::VectorXd &prev_sol,
+	const State &state, const double alpha, const double dt, const Eigen::VectorXd &prev_sol, const Eigen::VectorXd &last_sol,
 	const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
 	const StiffnessMatrix &velocity_mass1,
 	const Eigen::MatrixXd &rhs, Eigen::VectorXd &x)
 {
 	auto &assembler = AssemblerUtils::instance();
 	assembler.clear_cache();
+	const auto &gbases = state.iso_parametric() ? state.bases : state.geom_bases;
 
 	auto solver = LinearSolver::create(solver_type, precond_type);
 	solver->setParameters(solver_param);
@@ -40,6 +41,7 @@ void TransientNavierStokesSolver::minimize(
 	const int problem_dim = state.problem->is_scalar() ? 1 : state.mesh->dimension();
 	const int precond_num = problem_dim * state.n_bases;
 
+	StiffnessMatrix nl_matrix;
 	StiffnessMatrix velocity_mass = velocity_mass1/dt;
 	// velocity_mass.setZero();
 
@@ -54,9 +56,17 @@ void TransientNavierStokesSolver::minimize(
 		prev_sol_mass[i] = 0;
 
 	velocity_mass *= alpha;
+	assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
 	AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
 										 velocity_stiffness + velocity_mass, mixed_stiffness, pressure_stiffness,
 										 stoke_stiffness);
+	
+	Eigen::VectorXd last_sol_mass(rhs.size());
+	last_sol_mass.setZero();
+	last_sol_mass.block(0, 0, nl_matrix.rows(), 1) = nl_matrix * last_sol.block(0, 0, nl_matrix.rows(), 1);
+	for (int i : state.boundary_nodes)
+		last_sol_mass[i] = 0;
+
 	time.stop();
 	stokes_matrix_time = time.getElapsedTimeInSec();
 	logger().debug("\tStokes matrix assembly time {}s", time.getElapsedTimeInSec());
@@ -64,7 +74,7 @@ void TransientNavierStokesSolver::minimize(
 
 	time.start();
 
-	Eigen::VectorXd b = rhs + prev_sol_mass;
+	Eigen::VectorXd b = rhs + prev_sol_mass + last_sol_mass;
 
 	if (state.use_avg_pressure){
 		b[b.size()-1] = 0;
@@ -80,16 +90,8 @@ void TransientNavierStokesSolver::minimize(
 	assembly_time = 0;
 	inverting_time = 0;
 
-	int it = 0;
+	int it = 1;
 	double nlres_norm = 0;
-	b = rhs + prev_sol_mass;
-
-	if (state.use_avg_pressure)
-	{
-		b[b.size() - 1] = 0;
-	}
-	it += minimize_aux(state.formulation() + "Picard", state, dt, velocity_stiffness, mixed_stiffness, pressure_stiffness, velocity_mass, b,     1e-3, solver, nlres_norm, x);
-	it += minimize_aux(state.formulation()           , state, dt, velocity_stiffness, mixed_stiffness, pressure_stiffness, velocity_mass, b, gradNorm, solver, nlres_norm, x);
 
 	solver_info["iterations"] = it;
 	solver_info["gradNorm"] = nlres_norm;

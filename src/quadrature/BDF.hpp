@@ -13,6 +13,7 @@ public:
 
     double alpha() const;
     void rhs(Eigen::VectorXd &rhs) const;
+    void last_sol(Eigen::VectorXd &sol) const;
 
     void new_solution(Eigen::VectorXd &rhs);
 

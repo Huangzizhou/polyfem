@@ -3002,7 +3002,7 @@ void State::solve_problem()
 			sol(sol.size()-1) = 0;
 			Eigen::VectorXd c_sol = sol;
 
-			Eigen::VectorXd prev_sol;
+			Eigen::VectorXd prev_sol, last_sol;
 
 			int BDF_order = args["BDF_order"];
 			// int aux_steps = BDF_order-1;
@@ -3073,7 +3073,9 @@ void State::solve_problem()
 					current_rhs.block(prev_size, 0, n_larger, current_rhs.cols()).setZero();
 				}
 
-				ns_solver.minimize(*this, bdf.alpha(), current_dt, prev_sol,
+				bdf.last_sol(last_sol);
+
+				ns_solver.minimize(*this, bdf.alpha(), current_dt, prev_sol, last_sol,
 								   velocity_stiffness, mixed_stiffness, pressure_stiffness,
 								   velocity_mass, current_rhs, c_sol);
 				bdf.new_solution(c_sol);
