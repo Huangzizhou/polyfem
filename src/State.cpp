@@ -3075,7 +3075,7 @@ void State::solve_problem()
 
 				bdf.last_sol(last_sol);
 
-				ns_solver.minimize(*this, bdf.alpha(), current_dt, prev_sol, last_sol,
+				ns_solver.minimize(*this, bdf.is_full(), bdf.alpha(), current_dt, prev_sol, last_sol,
 								   velocity_stiffness, mixed_stiffness, pressure_stiffness,
 								   velocity_mass, current_rhs, c_sol);
 				bdf.new_solution(c_sol);

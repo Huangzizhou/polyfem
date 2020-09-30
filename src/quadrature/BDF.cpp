@@ -31,6 +31,11 @@ double BDF::alpha() const
     return alphas[history_.size() - 1];
 }
 
+bool BDF::is_full() const
+{
+    return history_.size() == order_;
+}
+
 void BDF::rhs(Eigen::VectorXd &rhs) const
 {
     assert(history_.size() > 0);

@@ -12,6 +12,7 @@ public:
     BDF(int order);
 
     double alpha() const;
+    bool is_full() const;
     void rhs(Eigen::VectorXd &rhs) const;
     void last_sol(Eigen::VectorXd &sol) const;
 
