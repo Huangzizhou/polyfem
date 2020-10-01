@@ -3013,6 +3013,11 @@ void State::solve_problem()
 			sol_to_pressure();
 
 			OperatorSplittingSolver ss;
+			int density_advection_skip = 1;
+			if(args.find("density_advection_skip") != args.end())
+			{
+				density_advection_skip = args["density_advection_skip"];
+			}
 			if (args["density"])
 			{
 				const int dim = mesh->dimension();
@@ -3055,10 +3060,10 @@ void State::solve_problem()
 				double current_dt = dt;
 
 				logger().info("{}/{} steps, dt={}s t={}s", t, time_steps, current_dt, time);
-				if(args["density"])
+				if(args["density"] && !((t-1)%density_advection_skip))
 				{
 					logger().info("density advection...");
-					ss.advect_density(gbases, bases, sol, dt);
+					ss.advect_density(gbases, bases, sol, dt * density_advection_skip);
 					logger().info("density advection finished!");
 				}
 				

@@ -183,7 +183,7 @@ namespace polyfem
         const std::string &solver_type, 
         const std::string &precond,
         const json& params,
-        const std::string &save_path) : solver_type(solver_type), precond(precond), params(params)
+        const std::string &save_path) : solver_type(solver_type), precond(precond)
         {
             initialize_solver(mesh, shape, n_el, local_boundary, boundary_nodes);
 
@@ -1352,7 +1352,6 @@ namespace polyfem
 
         std::string solver_type;
         std::string precond;
-        json params;
 
         Eigen::VectorXd density;
         // Eigen::VectorXi density_cell_no;
