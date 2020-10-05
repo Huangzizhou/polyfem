@@ -20,6 +20,8 @@ namespace polyfem
 TransientNavierStokesSolver::TransientNavierStokesSolver(const json &solver_param, const json &problem_params, const std::string &solver_type, const std::string &precond_type)
 	: solver_param(solver_param), problem_params(problem_params), solver_type(solver_type), precond_type(precond_type)
 {
+	gradNorm = solver_param.count("gradNorm") ? double(solver_param["gradNorm"]) : 1e-8;
+	iterations = solver_param.count("nl_iterations") ? int(solver_param["nl_iterations"]) : 100;
 }
 
 void TransientNavierStokesSolver::minimize(
@@ -57,42 +59,177 @@ void TransientNavierStokesSolver::minimize(
 	}
 
 	igl::Timer time;
-	time.start();
 
-	Eigen::VectorXd prev_sol_mass(rhs.size()); //prev_sol_mass=prev_sol
+	// part of rhs
+	Eigen::VectorXd prev_sol_mass(rhs.size());
 	prev_sol_mass.setZero();
 	prev_sol_mass.block(0, 0, velocity_mass.rows(), 1) = velocity_mass * prev_sol.block(0, 0, velocity_mass.rows(), 1);
 	for (int i : state.boundary_nodes)
 		prev_sol_mass[i] = 0;
 
-	assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
-	
-	Eigen::VectorXd last_sol_mass(rhs.size());
-	last_sol_mass.setZero();
-	last_sol_mass.block(0, 0, nl_matrix.rows(), 1) = nl_matrix * last_sol.block(0, 0, nl_matrix.rows(), 1);
-	for (int i : state.boundary_nodes)
-		last_sol_mass[i] = 0;
-
-	time.stop();
-	stokes_matrix_time = time.getElapsedTimeInSec();
-	logger().debug("\tRhs calculation time {}s", time.getElapsedTimeInSec());
-
+	// nonlinear residual
 	time.start();
+	StiffnessMatrix nl_matrix_full;
+	StiffnessMatrix total_matrix;
+	assembler.assemble_energy_hessian(state.formulation(), state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix_full);
+	AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
+										 (velocity_stiffness + nl_matrix_full) + alpha * velocity_mass, mixed_stiffness, pressure_stiffness,
+										 total_matrix);
+	time.stop();
+	assembly_time = time.getElapsedTimeInSec();
+	logger().debug("\tNavier Stokes assembly time {}s", time.getElapsedTimeInSec());
 
-	Eigen::VectorXd b = rhs + prev_sol_mass + last_sol_mass;
-	if (state.use_avg_pressure){
-		b[b.size()-1] = 0;
+	Eigen::VectorXd nlres = -(total_matrix * x) + rhs + prev_sol_mass;
+	for (int i : state.boundary_nodes)
+		nlres[i] = 0;
+	nlres[nlres.size()-1]=1e10;
+	double nlres_norm = nlres.block(0, 0, velocity_mass.rows(), 1).norm();
+	polyfem::logger().debug("\t||nonlinear_residual||_2 = {}\n", nlres_norm);
+
+	int it = 0;
+	iterations = 1;
+	while(nlres_norm > gradNorm && it < iterations)
+	{
+		it++;
+		// assemble rhs
+		time.start();
+		assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
+		
+		Eigen::VectorXd last_sol_mass(rhs.size());
+		last_sol_mass.setZero();
+		last_sol_mass.block(0, 0, nl_matrix.rows(), 1) = nl_matrix * x.block(0, 0, nl_matrix.rows(), 1);
+		for (int i : state.boundary_nodes)
+			last_sol_mass[i] = 0;
+
+		Eigen::VectorXd b = rhs + prev_sol_mass + last_sol_mass;
+		if (state.use_avg_pressure){
+			b[b.size()-1] = 0;
+		}
+		time.stop();
+		stokes_matrix_time = time.getElapsedTimeInSec();
+		logger().debug("\tRhs calculation time {}s", time.getElapsedTimeInSec());
+
+		time.start();
+		dirichlet_solve_prefactorized(*solver, stoke_stiffness, b, state.boundary_nodes, x);
+		time.stop();
+		stokes_solve_time = time.getElapsedTimeInSec();
+		logger().info("\tNavier-Stokes solve time {}s", time.getElapsedTimeInSec());
+
+		// linear residual
+		Eigen::VectorXd lres = -(stoke_stiffness * x) + rhs + prev_sol_mass + last_sol_mass;
+		for (int i : state.boundary_nodes)
+			lres[i] = 0;
+		lres[lres.size()-1]=0;
+		double lres_norm = lres.norm();
+		polyfem::logger().debug("\t||linear_residual||_2 = {}\n", lres_norm);
+
+		// nonlinear residual
+		time.start();
+		assembler.assemble_energy_hessian(state.formulation(), state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix_full);
+		AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
+											(velocity_stiffness + nl_matrix_full) + alpha * velocity_mass, mixed_stiffness, pressure_stiffness,
+											total_matrix);
+		time.stop();
+		assembly_time = time.getElapsedTimeInSec();
+		logger().debug("\tNavier Stokes assembly time {}s", time.getElapsedTimeInSec());
+
+		nlres = -(total_matrix * x) + rhs + prev_sol_mass;
+		for (int i : state.boundary_nodes)
+			nlres[i] = 0;
+		nlres[nlres.size()-1]=1e10;
+		nlres_norm = nlres.block(0, 0, velocity_mass.rows(), 1).norm();
+		polyfem::logger().debug("\t||nonlinear_residual||_2 = {}", nlres_norm);
 	}
 
-	dirichlet_solve_prefactorized(*solver, stoke_stiffness, b, state.boundary_nodes, x);
-	time.stop();
-	
-	stokes_solve_time = time.getElapsedTimeInSec();
-	logger().info("\tNavier-Stokes solve time {}s", time.getElapsedTimeInSec());
-	// return;
-
+	solver_info["gradNorm"] = nlres_norm;
 	solver_info["time_assembly"] = stokes_matrix_time;
 	solver_info["time_solve"] = stokes_solve_time;
+}
+
+int TransientNavierStokesSolver::minimize_aux(
+	const std::string &formulation, const State &state, const double dt,
+	const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
+	const StiffnessMatrix &velocity_mass,
+	const Eigen::VectorXd &rhs, const double grad_norm,
+	std::unique_ptr<LinearSolver> &solver, double &nlres_norm,
+	Eigen::VectorXd &x)
+{
+	igl::Timer time;
+	const auto &assembler = AssemblerUtils::instance();
+	const auto &gbases = state.iso_parametric() ? state.bases : state.geom_bases;
+	const int problem_dim = state.problem->is_scalar() ? 1 : state.mesh->dimension();
+	const int precond_num = problem_dim * state.n_bases;
+
+	StiffnessMatrix nl_matrix;
+	StiffnessMatrix total_matrix;
+
+
+	time.start();
+	assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
+	AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
+										 (velocity_stiffness + nl_matrix) + velocity_mass, mixed_stiffness, pressure_stiffness,
+										 total_matrix);
+	time.stop();
+	assembly_time = time.getElapsedTimeInSec();
+	logger().debug("\tNavier Stokes assembly time {}s", time.getElapsedTimeInSec());
+
+
+	Eigen::VectorXd nlres = -(total_matrix * x) + rhs;
+	for (int i : state.boundary_nodes)
+		nlres[i] = 0;
+	Eigen::VectorXd dx;
+	nlres_norm = nlres.norm();
+	logger().debug("\tInitial residula norm {}", nlres_norm);
+
+	int it = 0;
+
+	while (nlres_norm > grad_norm && it < iterations)
+	{
+		++it;
+
+		time.start();
+		if (formulation != state.formulation() + "Picard"){
+			assembler.assemble_energy_hessian(formulation, state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
+			AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
+												 (velocity_stiffness + nl_matrix) + velocity_mass, mixed_stiffness, pressure_stiffness,
+												 total_matrix);
+		}
+		dirichlet_solve(*solver, total_matrix, nlres, state.boundary_nodes, dx, precond_num);
+		// for (int i : state.boundary_nodes)
+		// 	dx[i] = 0;
+		time.stop();
+		inverting_time += time.getElapsedTimeInSec();
+		logger().debug("\tinverting time {}s", time.getElapsedTimeInSec());
+
+		x += dx;
+		//TODO check for nans
+
+		time.start();
+		assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, state.bases, gbases, x, nl_matrix);
+		AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
+											 (velocity_stiffness + nl_matrix) + velocity_mass, mixed_stiffness, pressure_stiffness,
+											 total_matrix);
+		time.stop();
+		logger().debug("\tassembly time {}s", time.getElapsedTimeInSec());
+		assembly_time += time.getElapsedTimeInSec();
+
+		nlres = -(total_matrix * x) + rhs;
+		for (int i : state.boundary_nodes)
+			nlres[i] = 0;
+
+		//warning here
+		nlres[nlres.size()-1]=0;
+		nlres_norm = nlres.norm();
+
+		polyfem::logger().debug("\titer: {},  ||g||_2 = {}, ||step|| = {}\n",
+								it, nlres_norm, dx.norm());
+	}
+
+	// solver_info["internal_solver"] = internal_solver;
+	// solver_info["internal_solver_first"] = internal_solver.front();
+	// solver_info["status"] = this->status();
+
+	return it;
 }
 
 } // namespace polyfem
