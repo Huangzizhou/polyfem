@@ -1,6 +1,8 @@
 #include <polyfem/State.hpp>
 
 #include <polyfem/BDF.hpp>
+#include <polyfem/AdamsBashforth.hpp>
+#include <polyfem/AdamsMoulton.hpp>
 #include <polyfem/TransientNavierStokesSolver.hpp>
 #include <polyfem/OperatorSplittingSolver.hpp>
 #include <polyfem/NavierStokesSolver.hpp>
@@ -66,11 +68,11 @@ namespace polyfem
 		}
 		std::vector<int> bnd_nodes;
 		bnd_nodes.reserve(boundary_nodes.size() / mesh->dimension());
-		for (auto it = boundary_nodes.begin(); it != boundary_nodes.end(); it++)
+		for (auto node : boundary_nodes)
 		{
-			if (!(*it % mesh->dimension()))
+			if (!(node % mesh->dimension()))
 				continue;
-			bnd_nodes.push_back(*it / mesh->dimension());
+			bnd_nodes.push_back(node / mesh->dimension());
 		}
 
 		const int dim = mesh->dimension();
@@ -98,6 +100,41 @@ namespace polyfem
 		/* initialize solution */
 		pressure = Eigen::MatrixXd::Zero(n_pressure_bases, 1);
 
+		// compute advection term on nodes given solution
+		auto sol2Advect = [&](const Eigen::MatrixXd& sol_c, Eigen::VectorXd& advect) -> void 
+		{
+			advect.setConstant(sol_c.rows(), sol_c.cols(), 0.);
+			Eigen::VectorXi traversed = Eigen::VectorXi::Zero(sol_c.size() / dim);
+			for (int e = 0; e < n_el; e++) {
+				Eigen::MatrixXd local_val, local_grad;
+				interpolate_at_local_vals(e, dim, bases, local_pts, sol_c, local_val, local_grad);
+				for (int j = 0; j < local_pts.rows(); j++) {
+					for (int d = 0; d < dim; d++) {
+						assert(bases[e].bases[j].global().size() == 1);
+						for (int d_ = 0; d_ < dim; d_++) {
+							advect(bases[e].bases[j].global()[0].index * dim + d) -= local_grad(j, d * dim + d_) * local_val(j, d_);
+						}
+					}
+					traversed(bases[e].bases[j].global()[0].index)++;
+				}
+			}
+			
+			for (int i = 0; i < traversed.size(); i++) {
+				for (int d = 0; d < dim; d++) {
+					advect(i * dim + d) /= traversed(i);
+				}
+			}
+		};
+
+		const int BDF_order = args["BDF_order"];
+		AdamsBashforth advection_integrator(BDF_order);
+		Eigen::VectorXd advect;
+		sol2Advect(sol, advect);
+		advection_integrator.new_solution(advect);
+
+		AdamsMoulton diffusion_integrator(BDF_order);
+		diffusion_integrator.new_solution((Eigen::VectorXd)sol);
+
 		for (int t = 1; t <= time_steps; t++)
 		{
 			double time = t * dt;
@@ -105,23 +142,16 @@ namespace polyfem
 
 			/* advection */
 			logger().info("Advection...");
-			if (args["particle"])
-				ss.advection_FLIP(*mesh, gbases, bases, sol, dt, local_pts);
-			else
-				ss.advection(*mesh, gbases, bases, sol, dt, local_pts);
+			// if (args["particle"])
+			// 	ss.advection_FLIP(*mesh, gbases, bases, sol, dt, local_pts);
+			// else
+				// ss.advection(*mesh, gbases, bases, sol, dt, local_pts);
+			advection_integrator.rhs(advect);
+			sol += advect * dt;
 			logger().info("Advection finished!");
 
 			/* apply boundary condition */
-			rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, sol, time);
-
-			/* viscosity */
-			logger().info("Solving diffusion...");
-			if (viscosity_ > 0)
-				ss.solve_diffusion_1st(mass, bnd_nodes, sol);
-			logger().info("Diffusion solved!");
-
-			/* external force */
-			ss.external_force(*mesh, assembler, gbases, bases, dt, sol, local_pts, problem, time);
+			// rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, sol, time);
 
 			/* incompressibility */
 			logger().info("Pressure projection...");
@@ -134,7 +164,24 @@ namespace polyfem
 			pressure = pressure / dt;
 
 			/* apply boundary condition */
-			rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, sol, time);
+			Eigen::MatrixXd bc(sol.rows(), sol.cols());
+			bc.setZero();
+			rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, bc, time);
+
+			/* viscosity */
+			logger().info("Solving diffusion...");
+			if (viscosity_ > 0) {
+				Eigen::VectorXd history;
+				diffusion_integrator.rhs(history);
+				if (history.size() == 0)
+					history.setConstant(sol.rows(), sol.cols(), 0.);
+				ss.solve_diffusion(history, diffusion_integrator.alpha(), mass, stiffness_viscosity, bnd_nodes, bc, sol, dt, viscosity_);
+			}
+			logger().info("Diffusion solved!");
+
+			sol2Advect(sol, advect);
+			advection_integrator.new_solution(advect);
+			diffusion_integrator.new_solution((Eigen::VectorXd)sol);
 
 			/* export to vtu */
 			if (args["save_time_sequence"] && !(t % (int)args["skip_frame"]))
@@ -142,7 +189,7 @@ namespace polyfem
 				if (!solve_export_to_file)
 					solution_frames.emplace_back();
 				save_vtu(resolve_output_path(fmt::format("step_{:d}.vtu", t)), time);
-				save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
+				// save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
 			}
 		}
 
