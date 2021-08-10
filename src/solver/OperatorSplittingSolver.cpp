@@ -79,7 +79,7 @@ void OperatorSplittingSolver::save_density()
 #endif
 }
 
-void OperatorSplittingSolver::initialize_grid(const polyfem::Mesh& mesh, 
+void OperatorSplittingSolver::initialize_density_grid(const polyfem::Mesh& mesh, 
 const std::vector<polyfem::ElementBases>& gbases, 
 const std::vector<polyfem::ElementBases>& bases,
 const double& density_dx)
@@ -97,10 +97,10 @@ const double& density_dx)
         density = Eigen::VectorXd::Zero((grid_cell_num(0)+1) * (grid_cell_num(1)+1) * (grid_cell_num(2)+1));
 }
 
-void OperatorSplittingSolver::initialize_mesh(const polyfem::Mesh& mesh, 
-const int shape, const int n_el,
-const std::vector<LocalBoundary>& local_boundary)
+void OperatorSplittingSolver::initialize_mesh(const polyfem::Mesh& mesh, const int shape_, const int n_el_, const std::vector<LocalBoundary>& local_boundary)
 {
+    shape = shape_;
+    n_el = n_el_;
     dim = mesh.dimension();
     mesh.bounding_box(min_domain, max_domain);
 
@@ -138,9 +138,9 @@ void OperatorSplittingSolver::initialize_hashtable(const polyfem::Mesh& mesh)
     p = p0 - p1;
     double avg_edge_length = p.rowwise().norm().mean();
 
-    long total_cell_num = 1;
+    int total_cell_num = 1;
     for(int d = 0; d < dim; d++) {
-        hash_table_cell_num[d] = (long)std::round((max_domain(d) - min_domain(d)) / avg_edge_length) * 4;
+        hash_table_cell_num[d] = (int)std::round((max_domain(d) - min_domain(d)) / avg_edge_length) * 4;
         logger().debug("hash grid in {} dimension: {}", d, hash_table_cell_num[d]);
         total_cell_num *= hash_table_cell_num[d];
     }
@@ -160,7 +160,7 @@ void OperatorSplittingSolver::initialize_hashtable(const polyfem::Mesh& mesh)
             }
         }
 
-        Eigen::Matrix<long, Eigen::Dynamic, 1> min_int(dim), max_int(dim);
+        Eigen::Matrix<int, Eigen::Dynamic, 1> min_int(dim), max_int(dim);
 
         for(int d = 0; d < dim; d++)
         {
@@ -174,21 +174,21 @@ void OperatorSplittingSolver::initialize_hashtable(const polyfem::Mesh& mesh)
                 max_int(d) = hash_table_cell_num[d];
         }
 
-        for(long x = min_int(0); x < max_int(0); x++)
+        for(int x = min_int(0); x < max_int(0); x++)
         {
-            for(long y = min_int(1); y < max_int(1); y++)
+            for(int y = min_int(1); y < max_int(1); y++)
             {
                 if(dim == 2)
                 {
-                    long idx = x + y * hash_table_cell_num[0];
+                    int idx = x + y * hash_table_cell_num[0];
                     hash_table[idx].push_back(e);
 
                 }
                 else
                 {
-                    for(long z = min_int(2); z < max_int(2); z++)
+                    for(int z = min_int(2); z < max_int(2); z++)
                     {
-                        long idx = x + (y + z * hash_table_cell_num[1]) * hash_table_cell_num[0];
+                        int idx = x + (y + z * hash_table_cell_num[1]) * hash_table_cell_num[0];
                         hash_table[idx].push_back(e);
                     }
                 }
@@ -208,95 +208,25 @@ void OperatorSplittingSolver::initialize_hashtable(const polyfem::Mesh& mesh)
     logger().debug("max intersection number for hash grid: {}", max_intersection_num);
 }
 
-void OperatorSplittingSolver::initialize_solver(const polyfem::Mesh& mesh,
-const int shape_, const int n_el_, 
-const std::vector<LocalBoundary>& local_boundary,
-const std::vector<int>& bnd_nodes)
+void OperatorSplittingSolver::initialize_linear_solver(const std::string &solver_type, const std::string &precond, const json& params)
 {
-    shape = shape_;
-    n_el = n_el_;
-    boundary_nodes = bnd_nodes;
-
-    initialize_mesh(mesh, shape, n_el, local_boundary);
-    initialize_hashtable(mesh);
-}
-
-OperatorSplittingSolver::OperatorSplittingSolver(const polyfem::Mesh& mesh,
-const int shape, const int n_el, 
-const std::vector<LocalBoundary>& local_boundary,
-const std::vector<int>& boundary_nodes_,
-const std::vector<int>& pressure_boundary_nodes,
-const std::vector<int>& bnd_nodes,
-const StiffnessMatrix& mass,
-const StiffnessMatrix& stiffness_viscosity,
-const StiffnessMatrix& stiffness_velocity,
-const StiffnessMatrix& mass_velocity,
-const double& dt,
-const double& viscosity_,
-const std::string &solver_type, 
-const std::string &precond,
-const json& params,
-const std::string &save_path) : solver_type(solver_type)
-{
-    initialize_solver(mesh, shape, n_el, local_boundary, bnd_nodes);
-
-    logger().info("Prefactorization begins...");
-
     solver_mass = LinearSolver::create(solver_type, precond);
     solver_mass->setParameters(params);
-    // if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-    {
-        StiffnessMatrix mat1 = mass_velocity;
-        prefactorize(*solver_mass, mat1, boundary_nodes_, mat1.rows(), save_path);
-    }
-
-    mat_diffusion = mass + viscosity_ * dt * stiffness_viscosity;
     
+    mat_diffusion.resize(0, 0);
     solver_diffusion = LinearSolver::create(solver_type, precond);
     solver_diffusion->setParameters(params);
-    // if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-    {
-        StiffnessMatrix mat1 = mat_diffusion;
-        prefactorize(*solver_diffusion, mat1, bnd_nodes, mat1.rows(), save_path);
-    }
 
-    if (pressure_boundary_nodes.size() == 0)
-        mat_projection.resize(stiffness_velocity.rows() + 1, stiffness_velocity.cols() + 1);
-    else
-        mat_projection.resize(stiffness_velocity.rows(), stiffness_velocity.cols());
-
-    std::vector<Eigen::Triplet<double> > coefficients;
-    coefficients.reserve(stiffness_velocity.nonZeros() + 2 * stiffness_velocity.rows());
-
-    for(int i = 0; i < stiffness_velocity.outerSize(); i++)
-    {
-        for(StiffnessMatrix::InnerIterator it(stiffness_velocity,i); it; ++it)
-        {
-            coefficients.emplace_back(it.row(),it.col(),it.value());
-        }
-    }
-
-    if (pressure_boundary_nodes.size() == 0)
-    {
-        const double val = 1. / (mat_projection.rows() - 1);
-        for (int i = 0; i < mat_projection.rows() - 1; i++)
-        {
-            coefficients.emplace_back(i, mat_projection.cols() - 1, val);
-            coefficients.emplace_back(mat_projection.rows() - 1, i, val);
-        }
-        coefficients.emplace_back(mat_projection.rows() - 1, mat_projection.cols() - 1, 2);
-    }
-
-    mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());
+    mat_projection.resize(0, 0);
     solver_projection = LinearSolver::create(solver_type, precond);
     solver_projection->setParameters(params);
-    logger().info("{}...", solver_projection->name());
-    // if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-    {
-        StiffnessMatrix mat2 = mat_projection;
-        prefactorize(*solver_projection, mat2, pressure_boundary_nodes, mat2.rows(), save_path);
-    }
-    logger().info("Prefactorization ends!");
+}
+
+OperatorSplittingSolver::OperatorSplittingSolver(const polyfem::Mesh& mesh, const int shape_, const int n_el_, const std::vector<LocalBoundary>& local_boundary, const std::string &solver_type, const std::string &precond, const json& params)
+{
+    initialize_mesh(mesh, shape_, n_el_, local_boundary);
+    initialize_hashtable(mesh);
+    initialize_linear_solver(solver_type, precond, params);
 }
 
 int OperatorSplittingSolver::handle_boundary_advection(RowVectorNd& pos)
@@ -304,11 +234,8 @@ int OperatorSplittingSolver::handle_boundary_advection(RowVectorNd& pos)
     double dist = 1e10;
     int idx = -1, local_idx = -1;
     const int size = boundary_elem_id.size();
-#ifdef POLYFEM_WITH_TBB
-    tbb::parallel_for(0, size, 1, [&](int e)
-#else
+
     for(int e = 0; e < size; e++)
-#endif
     {
         int elem_idx = boundary_elem_id[e];
 
@@ -328,35 +255,19 @@ int OperatorSplittingSolver::handle_boundary_advection(RowVectorNd& pos)
             }
         }
     }
-#ifdef POLYFEM_WITH_TBB
-    );
-#endif
     for(int d = 0; d < dim; d++)
         pos(d) = V(T(idx, local_idx), d);
     return idx;
 }
 
-int OperatorSplittingSolver::trace_back(const std::vector<polyfem::ElementBases>& gbases, 
-const std::vector<polyfem::ElementBases>& bases, 
-const RowVectorNd& pos_1, 
-const RowVectorNd& vel_1, 
-RowVectorNd& pos_2, 
-RowVectorNd& vel_2, 
-Eigen::MatrixXd& local_pos,
-const Eigen::MatrixXd& sol,
-const double dt)
+int OperatorSplittingSolver::trace_back(const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, const RowVectorNd& pos_1, const RowVectorNd& vel_1, RowVectorNd& pos_2, RowVectorNd& vel_2, Eigen::MatrixXd& local_pos, const Eigen::MatrixXd& sol, const double dt)
 {
     pos_2 = pos_1 - vel_1 * dt;
 
     return interpolator(gbases, bases, pos_2, vel_2, local_pos, sol);
 }
 
-int OperatorSplittingSolver::interpolator(const std::vector<polyfem::ElementBases>& gbases, 
-const std::vector<polyfem::ElementBases>& bases, 
-const RowVectorNd& pos, 
-RowVectorNd& vel, 
-Eigen::MatrixXd& local_pos,
-const Eigen::MatrixXd& sol)
+int OperatorSplittingSolver::interpolator(const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, const RowVectorNd& pos, RowVectorNd& vel, Eigen::MatrixXd& local_pos, const Eigen::MatrixXd& sol)
 {
     bool insideDomain = true;
 
@@ -390,7 +301,7 @@ void OperatorSplittingSolver::interpolator(const RowVectorNd& pos, double& val)
 {
     val = 0;
 
-    Eigen::Matrix<long, Eigen::Dynamic, 1> int_pos(dim);
+    Eigen::Matrix<int, Eigen::Dynamic, 1> int_pos(dim);
     Eigen::MatrixXd weights(2, dim);
     for(int d = 0; d < dim; d++)
     {
@@ -404,14 +315,14 @@ void OperatorSplittingSolver::interpolator(const RowVectorNd& pos, double& val)
     {
         if(dim == 2)
         {
-            const long idx = (int_pos(0) + d1) + (int_pos(1) + d2) * (grid_cell_num(0)+1);
+            const int idx = (int_pos(0) + d1) + (int_pos(1) + d2) * (grid_cell_num(0)+1);
             val += density(idx) * weights(d1, 0) * weights(d2, 1);
         }
         else
         {
             for(int d3 = 0; d3 < 2; d3++)
             {
-                const long idx = (int_pos(0) + d1) + (int_pos(1) + d2 + (int_pos(2) + d3) * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
+                const int idx = (int_pos(0) + d1) + (int_pos(1) + d2 + (int_pos(2) + d3) * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
                 val += density(idx) * weights(d1, 0) * weights(d2, 1) * weights(d3, 2);
             }
         }
@@ -423,15 +334,14 @@ const std::vector<polyfem::ElementBases>& gbases,
 const std::vector<polyfem::ElementBases>& bases, 
 Eigen::MatrixXd& sol, 
 const double dt, 
-const Eigen::MatrixXd& local_pts, 
-const int order,
-const int RK)
+const Eigen::MatrixXd& local_pts,
+const int order)
 {
     // to store new velocity
     Eigen::MatrixXd new_sol = Eigen::MatrixXd::Zero(sol.size(), 1);
     // number of FEM nodes
     const int n_vert = sol.size() / dim;
-    Eigen::VectorXi traversed = Eigen::VectorXi::Zero(n_vert);
+    std::vector<bool> traversed(n_vert, false);
 
 #ifdef POLYFEM_WITH_TBB
     tbb::parallel_for(0, n_el, 1, [&](int e)
@@ -448,19 +358,33 @@ const int RK)
             // global index of this FEM node
             int global = bases[e].bases[i].global()[0].index;
 
-            if (traversed(global)) continue;
-            traversed(global) = 1;
+            if (traversed[global]) continue;
+            traversed[global] = true;
 
             // velocity of this FEM node
             RowVectorNd vel_ = sol.block(global * dim, 0, dim, 1).transpose();
 
-            // global position of this FEM node
-            RowVectorNd pos_ = RowVectorNd::Zero(1, dim);
-            for (int d = 0; d < dim; d++)
-                pos_(d) = mapped(i, d) - vel_(d) * dt;
+            // backward euler
+            if (order == 1) {
+                RowVectorNd pos_(1, dim);
+                pos_ = mapped.row(i) - vel_ * dt;
 
-            Eigen::MatrixXd local_pos;
-            interpolator( gbases, bases, pos_, vel_, local_pos, sol);
+                Eigen::MatrixXd local_pos;
+                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
+            }
+            // RK2
+            else if (order == 2) {
+                RowVectorNd pos_(1, dim);
+                pos_ = mapped.row(i) - vel_ * (dt / 2);
+
+                Eigen::MatrixXd local_pos;
+                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
+
+                pos_ = mapped.row(i) - vel_ * dt;
+
+                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
+            }
+            else assert(false);
 
             new_sol.block(global * dim, 0, dim, 1) = vel_.transpose();
         }
@@ -493,7 +417,7 @@ const int RK)
                 Eigen::MatrixXd pos(1, dim);
                 pos(0) = i * resolution + min_domain(0);
                 pos(1) = j * resolution + min_domain(1);
-                const long idx = i + (long)j * (grid_cell_num(0)+1);
+                const int idx = i + (int)j * (grid_cell_num(0)+1);
 
                 Eigen::MatrixXd vel1, pos_;
                 problem->exact(pos, t, vel1);
@@ -518,7 +442,7 @@ const int RK)
                     pos(0) = i * resolution + min_domain(0);
                     pos(1) = j * resolution + min_domain(1);
                     pos(2) = k * resolution + min_domain(2);
-                    const long idx = i + (j + (long)k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
+                    const int idx = i + (j + (int)k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
                     
                     Eigen::MatrixXd vel1, pos_;
                     problem->exact(pos, t, vel1);
@@ -566,7 +490,7 @@ const int RK)
                 RowVectorNd pos(1, dim);
                 pos(0) = i * resolution + min_domain(0);
                 pos(1) = j * resolution + min_domain(1);
-                const long idx = i + (long)j * (grid_cell_num(0)+1);
+                const int idx = i + (int)j * (grid_cell_num(0)+1);
 
                 RowVectorNd vel1, pos_;
                 interpolator(gbases, bases, pos, vel1, local_pos, sol);
@@ -591,7 +515,7 @@ const int RK)
                     pos(0) = i * resolution + min_domain(0);
                     pos(1) = j * resolution + min_domain(1);
                     pos(2) = k * resolution + min_domain(2);
-                    const long idx = i + (j + (long)k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
+                    const int idx = i + (j + (int)k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
                     
                     RowVectorNd vel1, pos_;
                     interpolator(gbases, bases, pos, vel1, local_pos, sol);
@@ -963,65 +887,75 @@ void OperatorSplittingSolver::advection_PIC(const polyfem::Mesh& mesh, const std
 
 void OperatorSplittingSolver::solve_diffusion(const Eigen::VectorXd& history, const double alpha, const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol, const double dt, const double visc)
 {
-    StiffnessMatrix A = mass + (alpha * dt * visc) * stiffness_viscosity;
-    for (int d = 0; d < dim; d++) {
+    static double alpha_ = -1;
+    if (alpha_ != alpha) {
+        mat_diffusion = mass + (alpha * dt * visc) * stiffness_viscosity;
+        StiffnessMatrix A_ = mat_diffusion;
+        prefactorize(*solver_diffusion, A_, bnd_nodes, A_.rows());
+        alpha_ = alpha;
+    }
+// #ifdef POLYFEM_WITH_TBB
+    // tbb::parallel_for(0, dim, 1, [&](int d)
+// #else
+    for (int d = 0; d < dim; d++)
+// #endif
+    {
         Eigen::VectorXd x(sol.size() / dim);
-		Eigen::VectorXd history_(x.size());
-		for (int j = 0; j < x.size(); j++)
-		{
-			x(j) = sol(j * dim + d);
-			history_(j) = history(j * dim + d);
-		}
+        Eigen::VectorXd history_(x.size());
+        for (int j = 0; j < x.size(); j++)
+        {
+            x(j) = sol(j * dim + d);
+            history_(j) = history(j * dim + d);
+        }
 
         Eigen::VectorXd rhs = mass * x - stiffness_viscosity * ((dt * visc) * history_);
 
         // keep dirichlet bc
         for (int i = 0; i < bnd_nodes.size(); i++)
-        {
             rhs(bnd_nodes[i]) = bc(bnd_nodes[i] * dim + d);
-        }
         
-        StiffnessMatrix A_ = A;
-        dirichlet_solve(*solver_diffusion, A_, rhs, bnd_nodes, x, A_.rows(), "", false, false, false);
+        dirichlet_solve_prefactorized(*solver_diffusion, mat_diffusion, rhs, bnd_nodes, x);
 
         for(int j = 0; j < x.size(); j++)
-        {
             sol(j * dim + d) = x(j);
-        }
     }
+// #ifdef POLYFEM_WITH_TBB
+    // );
+// #endif
 }
 
-void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol)
-{    
-    for(int d = 0; d < dim; d++)
+void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol, const double dt, const double visc)
+{
+    if (mat_diffusion.rows() == 0)
+    {
+        mat_diffusion = mass + visc * dt * stiffness_viscosity;
+        StiffnessMatrix mat1 = mat_diffusion;
+        prefactorize(*solver_diffusion, mat1, bnd_nodes, mat1.rows());
+    }
+#ifdef POLYFEM_WITH_TBB
+    tbb::parallel_for(0, dim, 1, [&](int d)
+#else
+    for (int d = 0; d < dim; d++)
+#endif
     {
         Eigen::VectorXd x(sol.size() / dim);
         for(int j = 0; j < x.size(); j++)
-        {
             x(j) = sol(j * dim + d);
-        }
+
         Eigen::VectorXd rhs = mass * x;
 
         // keep dirichlet bc
         for (int i = 0; i < bnd_nodes.size(); i++)
-        {
             rhs(bnd_nodes[i]) = bc(bnd_nodes[i] * dim + d);
-        }
 
-        // if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-        {
-            dirichlet_solve_prefactorized(*solver_diffusion, mat_diffusion, rhs, bnd_nodes, x);
-        }
-        // else
-        // {
-            // dirichlet_solve(*solver_diffusion, mat_diffusion, rhs, bnd_nodes, x, mat_diffusion.rows(), "", false, false, false);
-        // }
+        dirichlet_solve_prefactorized(*solver_diffusion, mat_diffusion, rhs, bnd_nodes, x);
         
         for(int j = 0; j < x.size(); j++)
-        {
             sol(j * dim + d) = x(j);
-        }
     }
+#ifdef POLYFEM_WITH_TBB
+    );
+#endif
 }
 
 void OperatorSplittingSolver::external_force(const polyfem::Mesh& mesh,
@@ -1065,39 +999,51 @@ const double time)
 #endif
 }
 
-void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& mixed_stiffness, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure)
+void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_velocity, const StiffnessMatrix& mixed_stiffness, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure)
 {
-    Eigen::VectorXd rhs;
-    if (pressure_boundary_nodes.size() == 0)
-        rhs = Eigen::VectorXd::Zero(mixed_stiffness.rows() + 1); // mixed_stiffness * sol;
-    else
-        rhs = Eigen::VectorXd::Zero(mixed_stiffness.rows()); // mixed_stiffness * sol;
-    
-    Eigen::VectorXd temp = mixed_stiffness * sol;
-    for(int i = 0; i < temp.rows(); i++)
+    if (mat_projection.rows() == 0)
     {
-        rhs(i) = temp(i);
+        const int n_rows = stiffness_velocity.rows() + (int)(pressure_boundary_nodes.size() == 0);
+        mat_projection.resize(n_rows, n_rows);
+
+        std::vector<Eigen::Triplet<double> > coefficients;
+        coefficients.reserve(stiffness_velocity.nonZeros() + 2 * stiffness_velocity.rows());
+
+        for(int i = 0; i < stiffness_velocity.outerSize(); i++)
+            for(StiffnessMatrix::InnerIterator it(stiffness_velocity,i); it; ++it)
+                coefficients.emplace_back(it.row(),it.col(),it.value());
+
+        // average pressure = 0 constraint
+        if (pressure_boundary_nodes.size() == 0)
+        {
+            const double val = 1. / (n_rows - 1);
+            for (int i = 0; i < n_rows - 1; i++)
+            {
+                coefficients.emplace_back(i, n_rows - 1, val);
+                coefficients.emplace_back(n_rows - 1, i, val);
+            }
+            coefficients.emplace_back(n_rows - 1, n_rows - 1, 2);
+        }
+
+        mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());
+        StiffnessMatrix mat2 = mat_projection;
+        prefactorize(*solver_projection, mat2, pressure_boundary_nodes, n_rows);
     }
 
-    Eigen::VectorXd x = Eigen::VectorXd::Zero(rhs.size());
-    for(int i = 0; i < pressure.size(); i++)
-    {
-        x(i) = pressure(i);
+    Eigen::VectorXd rhs = mixed_stiffness * sol;
+    if (pressure_boundary_nodes.size() == 0) {
+        rhs.conservativeResize(rhs.size()+1);
+        rhs(rhs.size()-1) = 0;
     }
 
+    Eigen::VectorXd x(rhs.size());
+    x.setZero();
+
+    // dirichlet bc
     for(int i = 0; i < pressure_boundary_nodes.size(); i++)
-    {
         rhs(pressure_boundary_nodes[i]) = 0;
-        x(pressure_boundary_nodes[i]) = 0;
-    }
-    // if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-    // {
-        dirichlet_solve_prefactorized(*solver_projection, mat_projection, rhs, pressure_boundary_nodes, x);
-    // }
-    // else
-    // {
-        // dirichlet_solve(*solver_projection, mat_projection, rhs, std::vector<int>(), x, mat_projection.rows() - 1, "", false, false, false);
-    // }
+
+    dirichlet_solve_prefactorized(*solver_projection, mat_projection, rhs, pressure_boundary_nodes, x);
     
     if(pressure_boundary_nodes.size() == 0)
         pressure = x.head(x.size()-1);
@@ -1107,6 +1053,14 @@ void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& mixed_stiffn
 
 void OperatorSplittingSolver::projection(const StiffnessMatrix& velocity_mass, const StiffnessMatrix& mixed_stiffness, const std::vector<int>& boundary_nodes_, Eigen::MatrixXd& sol, const Eigen::MatrixXd& pressure)
 {
+    static bool first_time = true;
+    if (first_time)
+    {
+        StiffnessMatrix mat1 = velocity_mass;
+        prefactorize(*solver_mass, mat1, boundary_nodes_, mat1.rows());
+        first_time = false;
+    }
+
     Eigen::VectorXd rhs = mixed_stiffness.transpose() * pressure;
     Eigen::VectorXd dx = Eigen::VectorXd::Zero(sol.size());
 
@@ -1115,29 +1069,20 @@ void OperatorSplittingSolver::projection(const StiffnessMatrix& velocity_mass, c
         rhs(boundary_nodes_[i]) = 0;
     }
 
-    if (solver_type == "Pardiso" || solver_type == "Eigen::SimplicialLDLT" || solver_type == "Eigen::SparseLU")
-    {
-        dirichlet_solve_prefactorized(*solver_mass, velocity_mass, rhs, boundary_nodes_, dx);
-    }
-    else
-    {
-        auto mat = velocity_mass;
-        dirichlet_solve(*solver_mass, mat, rhs, boundary_nodes_, dx, velocity_mass.rows(), "", false, false, false);
-    }
+    dirichlet_solve_prefactorized(*solver_mass, velocity_mass, rhs, boundary_nodes_, dx);
 
     sol -= dx;
 }
 
-void OperatorSplittingSolver::projection(int n_bases, 
-const std::vector<polyfem::ElementBases>& gbases, 
+void OperatorSplittingSolver::projection(const std::vector<polyfem::ElementBases>& gbases, 
 const std::vector<polyfem::ElementBases>& bases, 
 const std::vector<polyfem::ElementBases>& pressure_bases, 
 const Eigen::MatrixXd& local_pts, 
 Eigen::MatrixXd& pressure, 
 Eigen::MatrixXd& sol)
 {
-    Eigen::VectorXd grad_pressure = Eigen::VectorXd::Zero(n_bases * dim);
-    Eigen::VectorXi traversed = Eigen::VectorXi::Zero(n_bases);
+    Eigen::VectorXd grad_pressure = Eigen::VectorXd::Zero(sol.size());
+    Eigen::VectorXi traversed = Eigen::VectorXi::Zero(sol.size() / dim);
 
     ElementAssemblyValues vals;
     for (int e = 0; e < n_el; ++e)
@@ -1170,24 +1115,24 @@ void OperatorSplittingSolver::initialize_density(const std::shared_ptr<Problem>&
 {
     Eigen::MatrixXd pts(1, dim);
     Eigen::MatrixXd tmp;
-    for(long i = 0; i <= grid_cell_num(0); i++)
+    for(int i = 0; i <= grid_cell_num(0); i++)
     {
         pts(0, 0) = i * resolution + min_domain(0);
-        for(long j = 0; j <= grid_cell_num(1); j++)
+        for(int j = 0; j <= grid_cell_num(1); j++)
         {
             pts(0, 1) = j * resolution + min_domain(1);
             if(dim == 2)
             {
-                const long idx = i + j * (grid_cell_num(0)+1);
+                const int idx = i + j * (grid_cell_num(0)+1);
                 problem->initial_density(pts, tmp);
                 density(idx) = tmp(0);
             }
             else
             {
-                for(long k = 0; k <= grid_cell_num(2); k++)
+                for(int k = 0; k <= grid_cell_num(2); k++)
                 {
                     pts(0, 2) = k * resolution + min_domain(2);
-                    const long idx = i + (j + k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
+                    const int idx = i + (j + k * (grid_cell_num(1)+1)) * (grid_cell_num(0)+1);
                     problem->initial_density(pts, tmp);
                     density(idx) = tmp(0);
                 }
@@ -1196,9 +1141,9 @@ void OperatorSplittingSolver::initialize_density(const std::shared_ptr<Problem>&
     }
 }
 
-long OperatorSplittingSolver::search_cell(const std::vector<polyfem::ElementBases>& gbases, const RowVectorNd& pos, Eigen::MatrixXd& local_pts)
+int OperatorSplittingSolver::search_cell(const std::vector<polyfem::ElementBases>& gbases, const RowVectorNd& pos, Eigen::MatrixXd& local_pts)
 {
-    Eigen::Matrix<long, Eigen::Dynamic, 1> pos_int(dim);
+    Eigen::Matrix<int, Eigen::Dynamic, 1> pos_int(dim);
     for(int d = 0; d < dim; d++)
     {
         pos_int(d) = floor((pos(d) - min_domain(d)) / (max_domain(d) - min_domain(d)) * hash_table_cell_num[d]);
@@ -1206,14 +1151,14 @@ long OperatorSplittingSolver::search_cell(const std::vector<polyfem::ElementBase
         else if(pos_int(d) >= hash_table_cell_num[d]) return -1;
     }
 
-    long idx = 0, dim_num = 1;
+    int idx = 0, dim_num = 1;
     for(int d = 0; d < dim; d++)
     {
         idx += pos_int(d) * dim_num;
         dim_num *= hash_table_cell_num[d];
     }
 
-    const std::vector<long>& list = hash_table[idx];
+    const std::vector<int>& list = hash_table[idx];
     for(auto it = list.begin(); it != list.end(); it++)
     {
         calculate_local_pts(gbases[*it], *it, pos, local_pts);

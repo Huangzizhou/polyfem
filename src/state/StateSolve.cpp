@@ -79,6 +79,7 @@ namespace polyfem
 		const int n_el = int(bases.size());       // number of elements
 		const int shape = gbases[0].bases.size(); // number of geometry vertices in an element
 		const double viscosity_ = build_json_params()["viscosity"];
+		const int BDF_order = args["BDF_order"];
 
 		logger().info("Matrices assembly...");
 		StiffnessMatrix stiffness_viscosity, mixed_stiffness, velocity_mass;
@@ -95,7 +96,11 @@ namespace polyfem
 		mixed_stiffness = mixed_stiffness.transpose();
 		logger().info("Matrices assembly ends!");
 
-		OperatorSplittingSolver ss(*mesh, shape, n_el, local_boundary, boundary_nodes, pressure_boundary_nodes, bnd_nodes, mass, stiffness_viscosity, stiffness, velocity_mass, dt, viscosity_, args["solver_type"], args["precond_type"], params, args["export"]["stiffness_mat"]);
+		OperatorSplittingSolver ss;
+		ss.initialize_mesh(*mesh, shape, n_el, local_boundary);
+		if (BDF_order == 1)
+    		ss.initialize_hashtable(*mesh);
+    	ss.initialize_linear_solver(args["solver_type"], args["precond_type"], params);
 
 		/* initialize solution */
 		pressure = Eigen::MatrixXd::Zero(n_pressure_bases, 1);
@@ -126,14 +131,14 @@ namespace polyfem
 			}
 		};
 
-		const int BDF_order = args["BDF_order"];
 		AdamsBashforth advection_integrator(BDF_order);
-		Eigen::VectorXd advect;
-		sol2Advect(sol, advect);
-		advection_integrator.new_solution(advect);
-
 		AdamsMoulton diffusion_integrator(BDF_order);
-		diffusion_integrator.new_solution((Eigen::VectorXd)sol);
+		Eigen::VectorXd advect;
+		if (BDF_order > 1) {
+			sol2Advect(sol, advect);
+			advection_integrator.new_solution(advect);
+			diffusion_integrator.new_solution((Eigen::VectorXd)sol);
+		}
 
 		for (int t = 1; t <= time_steps; t++)
 		{
@@ -142,12 +147,18 @@ namespace polyfem
 
 			/* advection */
 			logger().info("Advection...");
-			// if (args["particle"])
-			// 	ss.advection_FLIP(*mesh, gbases, bases, sol, dt, local_pts);
-			// else
-				// ss.advection(*mesh, gbases, bases, sol, dt, local_pts);
-			advection_integrator.rhs(advect);
-			sol += advect * dt;
+			if (BDF_order > 1) {
+				advection_integrator.rhs(advect);
+				sol += advect * dt;
+			}
+			else {
+				const int RK_order = args["RK"];
+				if (args["particle"])
+					ss.advection_FLIP(*mesh, gbases, bases, sol, dt, local_pts);
+				else
+					ss.advection(*mesh, gbases, bases, sol, dt, local_pts, RK_order);
+			}
+
 			logger().info("Advection finished!");
 
 			/* apply boundary condition */
@@ -155,9 +166,9 @@ namespace polyfem
 
 			/* incompressibility */
 			logger().info("Pressure projection...");
-			ss.solve_pressure(mixed_stiffness, pressure_boundary_nodes, sol, pressure);
+			ss.solve_pressure(stiffness, mixed_stiffness, pressure_boundary_nodes, sol, pressure);
 
-			ss.projection(n_bases, gbases, bases, pressure_bases, local_pts, pressure, sol);
+			ss.projection(gbases, bases, pressure_bases, local_pts, pressure, sol);
 			// ss.projection(velocity_mass, mixed_stiffness, boundary_nodes, sol, pressure);
 			logger().info("Pressure projection finished!");
 
@@ -171,17 +182,32 @@ namespace polyfem
 			/* viscosity */
 			logger().info("Solving diffusion...");
 			if (viscosity_ > 0) {
-				Eigen::VectorXd history;
-				diffusion_integrator.rhs(history);
-				if (history.size() == 0)
-					history.setConstant(sol.rows(), sol.cols(), 0.);
-				ss.solve_diffusion(history, diffusion_integrator.alpha(), mass, stiffness_viscosity, bnd_nodes, bc, sol, dt, viscosity_);
+				if (BDF_order > 1) {
+					Eigen::VectorXd history;
+					diffusion_integrator.rhs(history);
+					if (history.size() == 0)
+						history.setConstant(sol.rows(), sol.cols(), 0.);
+					ss.solve_diffusion(history, diffusion_integrator.alpha(), mass, stiffness_viscosity, bnd_nodes, bc, sol, dt, viscosity_);
+				}
+				else {
+					ss.solve_diffusion_1st(mass, stiffness_viscosity, bnd_nodes, bc, sol, dt, viscosity_);
+				}
 			}
 			logger().info("Diffusion solved!");
 
-			sol2Advect(sol, advect);
-			advection_integrator.new_solution(advect);
-			diffusion_integrator.new_solution((Eigen::VectorXd)sol);
+			if (BDF_order > 1) {
+				sol2Advect(sol, advect);
+				advection_integrator.new_solution(advect);
+				diffusion_integrator.new_solution((Eigen::VectorXd)sol);
+			}
+
+			// check nan
+			for (int i = 0; i < sol.size(); i++) {
+				if (!std::isfinite(sol(i))) {
+					logger().error("NAN Detected!!");
+					return;
+				}
+			}
 
 			/* export to vtu */
 			if (args["save_time_sequence"] && !(t % (int)args["skip_frame"]))

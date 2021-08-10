@@ -1,0 +1,25 @@
+{
+    "mesh": "/home/zizhou/polyfem/quad0.msh",
+    "normalize_mesh": true,
+    "solver_type": "Pardiso",
+    "RK": 1,
+    "particle": false,
+    "rhs_solver_type": "Pardiso",
+    "vismesh_rel_area": 1,
+    "tensor_formulation": "OperatorSplitting",
+    "BDF_order": 1,
+    "discr_order": 2,
+    "pressure_discr_order": 1,
+    "problem": "TaylorGreenVortex",
+    "save_time_sequence": false,
+    "skip_frame": 5,
+    "time_steps": 40,
+    "n_refs": 1,
+    "tend": 0.1,
+    "params": {
+        "viscosity": 0.01
+    },
+    "problem_params": {
+        "viscosity": 0.01
+    }
+}

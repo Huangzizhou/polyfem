@@ -1,0 +1,27 @@
+{
+    "BDF_order": 2,
+    "discr_order": 2,
+    "has_neumann": true,
+    "iso_parametric": false,
+    "mesh": "tunnel_quad_1.msh",
+    "n_refs": 0,
+    "normalize_mesh": false,
+    "params": {
+        "viscosity": 0.001
+    },
+    "particle": false,
+    "pressure_discr_order": 1,
+    "problem": "FlowWithObstacle",
+    "problem_params": {
+        "time_dependent": true,
+        "viscosity": 0.001
+    },
+    "rhs_solver_type": "Pardiso",
+    "save_time_sequence": true,
+    "skip_frame": 4,
+    "solver_type": "Pardiso",
+    "tend": 6,
+    "tensor_formulation": "OperatorSplitting",
+    "time_steps": 600,
+    "vismesh_rel_area": 1e-05
+}
