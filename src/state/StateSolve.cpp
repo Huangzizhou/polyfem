@@ -147,18 +147,28 @@ namespace polyfem
 
 			/* advection */
 			logger().info("Advection...");
-			if (BDF_order > 1) {
-				advection_integrator.rhs(advect);
-				sol += advect * dt;
-			}
-			else {
+			// if (BDF_order > 1) {
+			// 	advection_integrator.rhs(advect);
+			// 	sol += advect * dt;
+			// }
+			// else {
 				const int RK_order = args["RK"];
 				if (args["particle"])
 					ss.advection_FLIP(*mesh, gbases, bases, sol, dt, local_pts);
-				else
-					ss.advection(*mesh, gbases, bases, sol, dt, local_pts, RK_order);
-			}
-
+				else {
+					if (BDF_order == 1) {
+						ss.advection(*mesh, gbases, bases, sol, dt, local_pts, RK_order);
+					}
+					else {
+						auto solx = sol;
+						ss.advection(*mesh, gbases, bases, sol, dt, local_pts, RK_order);
+						auto soly = sol;
+						ss.advection(*mesh, gbases, bases, sol, -dt, local_pts, RK_order);
+						auto solz = sol;
+						sol = soly + 0.5 * (solx - solz);
+					}
+				}
+			// }
 			logger().info("Advection finished!");
 
 			/* apply boundary condition */

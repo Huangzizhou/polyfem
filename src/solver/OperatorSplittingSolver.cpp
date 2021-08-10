@@ -343,11 +343,11 @@ const int order)
     const int n_vert = sol.size() / dim;
     std::vector<bool> traversed(n_vert, false);
 
-#ifdef POLYFEM_WITH_TBB
-    tbb::parallel_for(0, n_el, 1, [&](int e)
-#else
+// #ifdef POLYFEM_WITH_TBB
+    // tbb::parallel_for(0, n_el, 1, [&](int e)
+// #else
     for (int e = 0; e < n_el; ++e)
-#endif
+// #endif
     {
         // to compute global position with barycentric coordinate
         Eigen::MatrixXd mapped;
@@ -364,34 +364,41 @@ const int order)
             // velocity of this FEM node
             RowVectorNd vel_ = sol.block(global * dim, 0, dim, 1).transpose();
 
-            // backward euler
-            if (order == 1) {
-                RowVectorNd pos_(1, dim);
-                pos_ = mapped.row(i) - vel_ * dt;
-
-                Eigen::MatrixXd local_pos;
-                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
+            RowVectorNd pos_(1, dim);
+            Eigen::MatrixXd local_pos_mid;
+            switch(order) {
+                case 1: break;
+                case 2:
+                {
+                    pos_ = mapped.row(i) - vel_ * (dt / 2);
+                    interpolator( gbases, bases, pos_, vel_, local_pos_mid, sol);
+                    break;
+                }
+                case 3:
+                {
+                    auto v1 = vel_;
+                    pos_ = mapped.row(i) - vel_ * (dt / 2);
+                    interpolator( gbases, bases, pos_, vel_, local_pos_mid, sol);
+                    auto v2 = vel_;
+                    pos_ = mapped.row(i) - (v2 * 2 - v1) * dt;
+                    interpolator( gbases, bases, pos_, vel_, local_pos_mid, sol);
+                    auto v3 = vel_;
+                    vel_ = (v1 + 4*v2 + v3) / 6;
+                    break;
+                }
+                default: assert(false);
             }
-            // RK2
-            else if (order == 2) {
-                RowVectorNd pos_(1, dim);
-                pos_ = mapped.row(i) - vel_ * (dt / 2);
 
-                Eigen::MatrixXd local_pos;
-                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
-
-                pos_ = mapped.row(i) - vel_ * dt;
-
-                interpolator( gbases, bases, pos_, vel_, local_pos, sol);
-            }
-            else assert(false);
+            pos_ = mapped.row(i) - vel_ * dt;
+            Eigen::MatrixXd local_pos;
+            interpolator( gbases, bases, pos_, vel_, local_pos, sol);
 
             new_sol.block(global * dim, 0, dim, 1) = vel_.transpose();
         }
     }
-#ifdef POLYFEM_WITH_TBB
-    );
-#endif
+// #ifdef POLYFEM_WITH_TBB
+    // );
+// #endif
     sol.swap(new_sol);
 }
 
@@ -932,11 +939,11 @@ void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, c
         StiffnessMatrix mat1 = mat_diffusion;
         prefactorize(*solver_diffusion, mat1, bnd_nodes, mat1.rows());
     }
-#ifdef POLYFEM_WITH_TBB
-    tbb::parallel_for(0, dim, 1, [&](int d)
-#else
+// #ifdef POLYFEM_WITH_TBB
+    // tbb::parallel_for(0, dim, 1, [&](int d)
+// #else
     for (int d = 0; d < dim; d++)
-#endif
+// #endif
     {
         Eigen::VectorXd x(sol.size() / dim);
         for(int j = 0; j < x.size(); j++)
@@ -953,9 +960,9 @@ void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, c
         for(int j = 0; j < x.size(); j++)
             sol(j * dim + d) = x(j);
     }
-#ifdef POLYFEM_WITH_TBB
-    );
-#endif
+// #ifdef POLYFEM_WITH_TBB
+    // );
+// #endif
 }
 
 void OperatorSplittingSolver::external_force(const polyfem::Mesh& mesh,
@@ -1022,7 +1029,7 @@ void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_ve
                 coefficients.emplace_back(i, n_rows - 1, val);
                 coefficients.emplace_back(n_rows - 1, i, val);
             }
-            coefficients.emplace_back(n_rows - 1, n_rows - 1, 2);
+            coefficients.emplace_back(n_rows - 1, n_rows - 1, 0);
         }
 
         mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());
@@ -1061,7 +1068,7 @@ void OperatorSplittingSolver::projection(const StiffnessMatrix& velocity_mass, c
         first_time = false;
     }
 
-    Eigen::VectorXd rhs = mixed_stiffness.transpose() * pressure;
+    Eigen::VectorXd rhs = (pressure.transpose() * mixed_stiffness).transpose();
     Eigen::VectorXd dx = Eigen::VectorXd::Zero(sol.size());
 
     for (int i = 0; i < boundary_nodes_.size(); i++)
@@ -1090,14 +1097,11 @@ Eigen::MatrixXd& sol)
         vals.compute(e, dim == 3, local_pts, pressure_bases[e], gbases[e]);
         for (int j = 0; j < local_pts.rows(); j++)
         {
-            int global_ = bases[e].bases[j].global()[0].index;
+            const int global_ = bases[e].bases[j].global()[0].index;
             for (int i = 0; i < vals.basis_values.size(); i++)
             {
-                for (int d = 0; d < dim; d++)
-                {
-                    assert(pressure_bases[e].bases[i].global().size() == 1);
-                    grad_pressure(global_ * dim + d) += vals.basis_values[i].grad_t_m(j, d) * pressure(pressure_bases[e].bases[i].global()[0].index);
-                }
+                assert(pressure_bases[e].bases[i].global().size() == 1);
+                grad_pressure.block(global_ * dim, 0, dim, 1) += vals.basis_values[i].grad_t_m.row(j).transpose() * pressure(pressure_bases[e].bases[i].global()[0].index);
             }
             traversed(global_)++;
         }
@@ -1159,19 +1163,19 @@ int OperatorSplittingSolver::search_cell(const std::vector<polyfem::ElementBases
     }
 
     const std::vector<int>& list = hash_table[idx];
-    for(auto it = list.begin(); it != list.end(); it++)
+    for(auto x : list)
     {
-        calculate_local_pts(gbases[*it], *it, pos, local_pts);
+        calculate_local_pts(gbases[x], x, pos, local_pts);
 
         if(shape == dim + 1)
         {
             if(local_pts.minCoeff() > -1e-13 && local_pts.sum() < 1 + 1e-13)
-                return *it;
+                return x;
         }
         else
         {
             if(local_pts.minCoeff() > -1e-13 && local_pts.maxCoeff() < 1 + 1e-13)
-                return *it;
+                return x;
         }
     }
     return -1; // not inside any elem
