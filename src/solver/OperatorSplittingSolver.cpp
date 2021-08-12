@@ -86,7 +86,7 @@ const double& density_dx)
 {
     resolution = density_dx;
 
-    grid_cell_num = RowVectorNd::Zero(dim);
+    grid_cell_num = Eigen::VectorXi::Zero(dim);
     for(int d = 0; d < dim; d++)
     {
         grid_cell_num(d) = ceil((max_domain(d) - min_domain(d)) / resolution);
@@ -359,7 +359,7 @@ const int order)
             int global = bases[e].bases[i].global()[0].index;
 
             if (traversed[global]) continue;
-            traversed[global] = true;
+            else traversed[global] = true;
 
             // velocity of this FEM node
             RowVectorNd vel_ = sol.block(global * dim, 0, dim, 1).transpose();
@@ -1029,7 +1029,7 @@ void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_ve
                 coefficients.emplace_back(i, n_rows - 1, val);
                 coefficients.emplace_back(n_rows - 1, i, val);
             }
-            coefficients.emplace_back(n_rows - 1, n_rows - 1, 0);
+            coefficients.emplace_back(n_rows - 1, n_rows - 1, 2);
         }
 
         mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());

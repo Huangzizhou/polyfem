@@ -93,7 +93,7 @@ namespace polyfem
 
         // density
         Eigen::VectorXd density;
-        RowVectorNd grid_cell_num;
+        Eigen::VectorXi grid_cell_num;
         double resolution;
     };
 }

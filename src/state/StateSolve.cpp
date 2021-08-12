@@ -162,10 +162,13 @@ namespace polyfem
 					else {
 						auto solx = sol;
 						ss.advection(*mesh, gbases, bases, sol, dt, local_pts, RK_order);
+						save_vtu(resolve_output_path(fmt::format("advect1_{:d}.vtu", t)), time);
 						auto soly = sol;
 						ss.advection(*mesh, gbases, bases, sol, -dt, local_pts, RK_order);
+						save_vtu(resolve_output_path(fmt::format("advect2_{:d}.vtu", t)), time);
 						auto solz = sol;
 						sol = soly + 0.5 * (solx - solz);
+						save_vtu(resolve_output_path(fmt::format("advect3_{:d}.vtu", t)), time);
 					}
 				}
 			// }
