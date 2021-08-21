@@ -351,6 +351,8 @@ namespace polyfem
 		void compute_errors();
 		//saves all data on the disk according to the input params
 		void export_data();
+		//compute pressure integrals
+		void getPressureIntegral(Eigen::VectorXd& integrals) const;
 
 		//evaluates the function fun at the vertices on the mesh
 		//actual dim is the size of the problem (e.g., 1 for Laplace, dim for elasticity)

@@ -31,6 +31,7 @@ namespace polyfem
 		virtual void neumann_acceleration_bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const {}
 
 		virtual void exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const {};
+		virtual void exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const {};
 		virtual void exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const {};
 
 		inline const std::string &name() const { return name_; }

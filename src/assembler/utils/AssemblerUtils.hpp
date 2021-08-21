@@ -163,7 +163,7 @@ namespace polyfem
 		static void merge_mixed_matrices(
 			const int n_bases, const int n_pressure_bases, const int problem_dim, const bool add_average,
 			const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
-			StiffnessMatrix &stiffness);
+			StiffnessMatrix &stiffness, const Eigen::VectorXd &pressure_integrals);
 
 	private:
 		//all assemblers

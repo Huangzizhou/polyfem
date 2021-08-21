@@ -858,6 +858,22 @@ void TaylorGreenVortexProblem::exact(const Eigen::MatrixXd &pts, const double t,
 	}
 }
 
+void TaylorGreenVortexProblem::exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), 1);
+	const double T = 6.283185307179586;
+	for (int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		if(pts.cols() == 2)
+		{
+			val(i, 0) = -0.25*(cos(2*T*x)+cos(2*T*y))*exp(-4*viscosity_*T*T*t);
+		}
+	}
+}
+
 void TaylorGreenVortexProblem::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols() * pts.cols());
@@ -1197,9 +1213,10 @@ void TransientStokeProblemExact::set_parameters(const json &params)
 	}
 }
 
-void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+void TransientStokeProblemExact::exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
-	val.resize(pts.rows(), pts.cols());
+	val.resize(pts.rows(), 1);
+	const double T = 6.283185307179586;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -1207,8 +1224,25 @@ void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double 
 
 		if(pts.cols() == 2)
 		{
-			val(i, 0) = -t + x*x / 2 + x* y;
-			val(i, 1) = t - x * y - y *y / 2;
+			val(i, 0) = 0.5*sin(T*x)*cos(T*y)*cos(T*t);
+		}
+	}
+}
+
+void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), pts.cols());
+	const double T = 6.283185307179586;
+	for (int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		if(pts.cols() == 2)
+		{
+			const double time_scaling = 0.5*cos(T*t);
+			val(i, 0) = sin(T*x)*sin(T*y)*time_scaling;
+			val(i, 1) = cos(T*x)*cos(T*y)*time_scaling;
 		}
 		else
 		{
@@ -1230,31 +1264,38 @@ void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double 
 void TransientStokeProblemExact::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols() * pts.cols());
-
-	// for (int i = 0; i < pts.rows(); ++i)
-	// {
-	// 	const double x = pts(i, 0);
-	// 	const double y = pts(i, 1);
-
-	// 	val(i, 0) = -sin(x) * sin(y) * time_scaling;
-	// 	val(i, 1) = cos(x) * cos(y) * time_scaling;
-	// 	val(i, 2) = -cos(x) * cos(y) * time_scaling;
-	// 	val(i, 3) = sin(x) * sin(y) * time_scaling;
-	// }
-}
-
-void TransientStokeProblemExact::rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
-{
-	val.resize(pts.rows(), pts.cols());
-
+	const double T = 6.283185307179586;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
 		const double y = pts(i, 1);
 		if(pts.cols() == 2)
 		{
-			val(i, 0) = -viscosity_ - t * y + 1. / 2. * x * (x * x + x * y + y * y);
-			val(i, 1) =  viscosity_ - t * x + 1. / 2. * y * (x * x + x * y + y * y) + 2;
+			const double tmp = 0.5*T*cos(T*t);
+			val(i, 0) = cos(T*x)*sin(T*y)*tmp;
+			val(i, 1) = cos(T*y)*sin(T*x)*tmp;
+			val(i, 2) = -val(i, 1);
+			val(i, 3) = -val(i, 0);
+		}
+	}
+}
+
+void TransientStokeProblemExact::rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), pts.cols());
+	const double T = 6.283185307179586;
+	for (int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+		if(pts.cols() == 2)
+		{
+			const double Ct = cos(T*t);
+			const double St = sin(T*t);
+			const double CxCy = cos(T*x)*cos(T*y);
+			const double SxSy = sin(T*x)*sin(T*y);
+			val(i, 0) = T/8*(4*(Ct*CxCy-St*SxSy)+Ct*Ct*sin(2*T*x))+T*T*viscosity_*SxSy*Ct;
+			val(i, 1) = -T/8*(4*(St*CxCy+Ct*SxSy)+Ct*Ct*sin(2*T*y))+T*T*viscosity_*CxCy*Ct;
 		}
 		else
 		{

@@ -140,6 +140,9 @@ namespace polyfem
 			diffusion_integrator.new_solution((Eigen::VectorXd)sol);
 		}
 
+		Eigen::VectorXd integrals;
+		getPressureIntegral(integrals);
+
 		for (int t = 1; t <= time_steps; t++)
 		{
 			double time = t * dt;
@@ -179,7 +182,7 @@ namespace polyfem
 
 			/* incompressibility */
 			logger().info("Pressure projection...");
-			ss.solve_pressure(stiffness, mixed_stiffness, pressure_boundary_nodes, sol, pressure);
+			ss.solve_pressure(stiffness, mixed_stiffness, integrals, pressure_boundary_nodes, sol, pressure);
 
 			ss.projection(gbases, bases, pressure_bases, local_pts, pressure, sol);
 			// ss.projection(velocity_mass, mixed_stiffness, boundary_nodes, sol, pressure);

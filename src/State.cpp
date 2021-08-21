@@ -767,9 +767,11 @@ namespace polyfem
 
 				const int problem_dim = problem->is_scalar() ? 1 : mesh->dimension();
 
+				Eigen::VectorXd integrals;
+				getPressureIntegral(integrals);
 				AssemblerUtils::merge_mixed_matrices(n_bases, n_pressure_bases, problem_dim, use_avg_pressure ? assembler.is_fluid(formulation()) : false,
 													 velocity_stiffness, mixed_stiffness, pressure_stiffness,
-													 stiffness);
+									 				 stiffness, integrals);
 
 				if (problem->is_time_dependent())
 				{
@@ -1082,6 +1084,27 @@ namespace polyfem
 		timer.stop();
 		solving_time = timer.getElapsedTime();
 		logger().info(" took {}s", solving_time);
+	}
+
+	void State::getPressureIntegral(Eigen::VectorXd& integrals) const
+	{
+		integrals.setConstant(n_pressure_bases, 1, 0.);
+		const auto& gbases = iso_parametric() ? bases : geom_bases;
+		for (int e = 0; e < mesh->n_elements(); ++e) {
+			ElementAssemblyValues vals;
+			vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
+
+			const int n_loc_bases = int(vals.basis_values.size());
+			std::vector<Eigen::MatrixXd> tmps;
+			std::vector<int> globals;
+			for (int i = 0; i < n_loc_bases; ++i) {
+				const auto &val = vals.basis_values[i];
+				for (size_t ii = 0; ii < val.global.size(); ++ii) {
+					Eigen::MatrixXd tmp = val.global[ii].val * val.val;
+					integrals(val.global[ii].index) += (tmp.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+				}
+			}
+		}
 	}
 
 	void State::compute_errors()

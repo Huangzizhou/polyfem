@@ -1006,7 +1006,7 @@ const double time)
 #endif
 }
 
-void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_velocity, const StiffnessMatrix& mixed_stiffness, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure)
+void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_velocity, const StiffnessMatrix& mixed_stiffness, const Eigen::VectorXd& pressure_integrals, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure)
 {
     if (mat_projection.rows() == 0)
     {
@@ -1023,13 +1023,14 @@ void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_ve
         // average pressure = 0 constraint
         if (pressure_boundary_nodes.size() == 0)
         {
-            const double val = 1. / (n_rows - 1);
+            assert(pressure_integrals.size() == n_rows - 1);
+            // const double val = 1. / (n_rows - 1);
             for (int i = 0; i < n_rows - 1; i++)
             {
-                coefficients.emplace_back(i, n_rows - 1, val);
-                coefficients.emplace_back(n_rows - 1, i, val);
+                coefficients.emplace_back(i, n_rows - 1, pressure_integrals[i]);
+                coefficients.emplace_back(n_rows - 1, i, pressure_integrals[i]);
             }
-            coefficients.emplace_back(n_rows - 1, n_rows - 1, 2);
+            coefficients.emplace_back(n_rows - 1, n_rows - 1, 0);
         }
 
         mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());

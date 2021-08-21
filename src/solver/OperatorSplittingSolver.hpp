@@ -48,7 +48,7 @@ namespace polyfem
 
         void external_force(const polyfem::Mesh& mesh, const AssemblerUtils& assembler, const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, const double dt, Eigen::MatrixXd& sol, const Eigen::MatrixXd& local_pts, const std::shared_ptr<Problem> problem, const double time);
 
-        void solve_pressure(const StiffnessMatrix& stiffness_velocity, const StiffnessMatrix& mixed_stiffness, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure);
+        void solve_pressure(const StiffnessMatrix& stiffness_velocity, const StiffnessMatrix& mixed_stiffness, const Eigen::VectorXd& pressure_integrals, const std::vector<int>& pressure_boundary_nodes, Eigen::MatrixXd& sol, Eigen::MatrixXd& pressure);
         void projection(const StiffnessMatrix& velocity_mass, const StiffnessMatrix& mixed_stiffness, const std::vector<int>& boundary_nodes_, Eigen::MatrixXd& sol, const Eigen::MatrixXd& pressure);
         void projection(const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, const std::vector<polyfem::ElementBases>& pressure_bases, const Eigen::MatrixXd& local_pts, Eigen::MatrixXd& pressure, Eigen::MatrixXd& sol);
 

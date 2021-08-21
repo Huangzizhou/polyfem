@@ -30,7 +30,7 @@ namespace polyfem
 
 	private:
 		int minimize_aux(const std::string &formulation, const std::vector<int> &skipping, const State &state, const double dt,
-						 const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
+						 const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness, Eigen::VectorXd &pressure_integrals,
 						 const StiffnessMatrix &velocity_mass,
 						 const Eigen::VectorXd &rhs, const double grad_norm,
 						 std::unique_ptr<polysolve::LinearSolver> &solver, double &nlres_norm,

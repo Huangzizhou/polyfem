@@ -491,7 +491,7 @@ namespace polyfem
 	void AssemblerUtils::merge_mixed_matrices(
 		const int n_bases, const int n_pressure_bases, const int problem_dim, const bool add_average,
 		const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
-		StiffnessMatrix &stiffness)
+		StiffnessMatrix &stiffness, const Eigen::VectorXd &pressure_integrals)
 	{
 		assert(velocity_stiffness.rows() == velocity_stiffness.cols());
 		assert(velocity_stiffness.rows() == n_bases * problem_dim);
@@ -501,6 +501,8 @@ namespace polyfem
 
 		assert(pressure_stiffness.size() == 0 || pressure_stiffness.rows() == n_pressure_bases);
 		assert(pressure_stiffness.size() == 0 || pressure_stiffness.cols() == n_pressure_bases);
+
+		assert(pressure_integrals.size() == 0 || pressure_integrals.size() == n_pressure_bases);
 
 		const int avg_offset = add_average ? 1 : 0;
 
@@ -534,11 +536,11 @@ namespace polyfem
 
 		if (add_average)
 		{
-			const double val = 1.0 / n_pressure_bases;
+			// const double val = 1.0 / n_pressure_bases;
 			for (int i = 0; i < n_pressure_bases; ++i)
 			{
-				blocks.emplace_back(n_bases * problem_dim + i, n_bases * problem_dim + n_pressure_bases, val);
-				blocks.emplace_back(n_bases * problem_dim + n_pressure_bases, n_bases * problem_dim + i, val);
+				blocks.emplace_back(n_bases * problem_dim + i, n_bases * problem_dim + n_pressure_bases, pressure_integrals(i));
+				blocks.emplace_back(n_bases * problem_dim + n_pressure_bases, n_bases * problem_dim + i, pressure_integrals(i));
 			}
 		}
 

@@ -213,6 +213,7 @@ private:
 
 		void exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
 		void exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
+		void exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
 
 		void rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
 		void bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
@@ -315,6 +316,7 @@ private:
 		void set_parameters(const json &params) override;
 
 		void exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
+		void exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
 		void exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;
 
 		void rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const override;

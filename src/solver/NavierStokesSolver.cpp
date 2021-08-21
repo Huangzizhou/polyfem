@@ -49,9 +49,11 @@ namespace polyfem
 		assembler.assemble_mixed_problem(state.formulation(), state.mesh->is_volume(), state.n_pressure_bases, state.n_bases, state.pressure_bases, state.bases, gbases, state.pressure_ass_vals_cache, state.ass_vals_cache, mixed_stiffness);
 		assembler.assemble_pressure_problem(state.formulation(), state.mesh->is_volume(), state.n_pressure_bases, state.pressure_bases, gbases, state.pressure_ass_vals_cache, pressure_stiffness);
 
+		Eigen::VectorXd integrals;
+		state.getPressureIntegral(integrals);
 		AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
 											 velocity_stiffness, mixed_stiffness, pressure_stiffness,
-											 stoke_stiffness);
+											 stoke_stiffness, integrals);
 		time.stop();
 		stokes_matrix_time = time.getElapsedTimeInSec();
 		logger().debug("\tStokes matrix assembly time {}s", time.getElapsedTimeInSec());
@@ -93,8 +95,8 @@ namespace polyfem
 		int it = 0;
 		double nlres_norm = 0;
 		b = rhs;
-		it += minimize_aux(state.formulation() + "Picard", skipping, state, velocity_stiffness, mixed_stiffness, pressure_stiffness, b, 1e-3, solver, nlres_norm, x);
-		it += minimize_aux(state.formulation(), skipping, state, velocity_stiffness, mixed_stiffness, pressure_stiffness, b, gradNorm, solver, nlres_norm, x);
+		it += minimize_aux(state.formulation() + "Picard", skipping, state, velocity_stiffness, mixed_stiffness, pressure_stiffness, integrals, b, 1e-3, solver, nlres_norm, x);
+		it += minimize_aux(state.formulation(), skipping, state, velocity_stiffness, mixed_stiffness, pressure_stiffness, integrals, b, gradNorm, solver, nlres_norm, x);
 
 		solver_info["iterations"] = it;
 		solver_info["gradNorm"] = nlres_norm;
@@ -110,7 +112,7 @@ namespace polyfem
 
 	int NavierStokesSolver::minimize_aux(
 		const std::string &formulation, const std::vector<int> &skipping, const State &state,
-		const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness,
+		const StiffnessMatrix &velocity_stiffness, const StiffnessMatrix &mixed_stiffness, const StiffnessMatrix &pressure_stiffness, Eigen::VectorXd &pressure_integrals,
 		const Eigen::VectorXd &rhs, const double grad_norm,
 		std::unique_ptr<LinearSolver> &solver, double &nlres_norm,
 		Eigen::VectorXd &x)
@@ -129,7 +131,7 @@ namespace polyfem
 		assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, false, state.bases, gbases, state.ass_vals_cache, x, mat_cache, nl_matrix);
 		AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
 											 velocity_stiffness + nl_matrix, mixed_stiffness, pressure_stiffness,
-											 total_matrix);
+											 total_matrix, pressure_integrals);
 		time.stop();
 		assembly_time = time.getElapsedTimeInSec();
 		logger().debug("\tNavier Stokes assembly time {}s", time.getElapsedTimeInSec());
@@ -155,7 +157,7 @@ namespace polyfem
 				assembler.assemble_energy_hessian(formulation, state.mesh->is_volume(), state.n_bases, false, state.bases, gbases, state.ass_vals_cache, x, mat_cache, nl_matrix);
 				AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
 													 velocity_stiffness + nl_matrix, mixed_stiffness, pressure_stiffness,
-													 total_matrix);
+													 total_matrix, pressure_integrals);
 			}
 			dirichlet_solve(*solver, total_matrix, nlres, state.boundary_nodes, dx, precond_num, "", false, true, state.use_avg_pressure);
 			// for (int i : state.boundary_nodes)
@@ -172,7 +174,7 @@ namespace polyfem
 			assembler.assemble_energy_hessian(state.formulation() + "Picard", state.mesh->is_volume(), state.n_bases, false, state.bases, gbases, state.ass_vals_cache, x, mat_cache, nl_matrix);
 			AssemblerUtils::merge_mixed_matrices(state.n_bases, state.n_pressure_bases, problem_dim, state.use_avg_pressure,
 												 velocity_stiffness + nl_matrix, mixed_stiffness, pressure_stiffness,
-												 total_matrix);
+												 total_matrix, pressure_integrals);
 			time.stop();
 			logger().debug("\tassembly time {}s", time.getElapsedTimeInSec());
 			assembly_time += time.getElapsedTimeInSec();
