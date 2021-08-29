@@ -931,7 +931,7 @@ void OperatorSplittingSolver::solve_diffusion(const Eigen::VectorXd& history, co
 // #endif
 }
 
-void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol, const double dt, const double visc)
+void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, const Eigen::MatrixXd& force, Eigen::MatrixXd& sol, const double dt, const double visc)
 {
     if (mat_diffusion.rows() == 0)
     {
@@ -950,6 +950,10 @@ void OperatorSplittingSolver::solve_diffusion_1st(const StiffnessMatrix& mass, c
             x(j) = sol(j * dim + d);
 
         Eigen::VectorXd rhs = mass * x;
+
+        for (int i = 0; i < rhs.size(); i++) {
+            rhs(i) += force(i * dim + d) * dt;
+        }
 
         // keep dirichlet bc
         for (int i = 0; i < bnd_nodes.size(); i++)

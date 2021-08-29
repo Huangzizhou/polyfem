@@ -43,7 +43,7 @@ namespace polyfem
         void advection_FLIP(const polyfem::Mesh& mesh, const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, Eigen::MatrixXd& sol, const double dt, const Eigen::MatrixXd& local_pts, const int order = 1);
         void advection_PIC(const polyfem::Mesh& mesh, const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, Eigen::MatrixXd& sol, const double dt, const Eigen::MatrixXd& local_pts, const int order = 1);
 
-        void solve_diffusion_1st(const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol, const double dt, const double visc);
+        void solve_diffusion_1st(const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, const Eigen::MatrixXd& force, Eigen::MatrixXd& sol, const double dt, const double visc);
         void solve_diffusion(const Eigen::VectorXd& history, const double alpha, const StiffnessMatrix& mass, const StiffnessMatrix& stiffness_viscosity, const std::vector<int>& bnd_nodes, const Eigen::MatrixXd& bc, Eigen::MatrixXd& sol, const double dt, const double visc);
 
         void external_force(const polyfem::Mesh& mesh, const AssemblerUtils& assembler, const std::vector<polyfem::ElementBases>& gbases, const std::vector<polyfem::ElementBases>& bases, const double dt, Eigen::MatrixXd& sol, const Eigen::MatrixXd& local_pts, const std::shared_ptr<Problem> problem, const double time);
