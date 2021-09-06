@@ -1034,7 +1034,7 @@ void OperatorSplittingSolver::solve_pressure(const StiffnessMatrix& stiffness_ve
                 coefficients.emplace_back(i, n_rows - 1, pressure_integrals[i]);
                 coefficients.emplace_back(n_rows - 1, i, pressure_integrals[i]);
             }
-            coefficients.emplace_back(n_rows - 1, n_rows - 1, 0);
+            // coefficients.emplace_back(n_rows - 1, n_rows - 1, 0);
         }
 
         mat_projection.setFromTriplets(coefficients.begin(), coefficients.end());

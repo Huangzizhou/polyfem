@@ -15,7 +15,6 @@ public:
 
     void new_solution(const Eigen::VectorXd &rhs);
 
-private:
     std::deque<Eigen::VectorXd> history_;
     int order_;
 };

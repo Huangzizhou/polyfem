@@ -7,9 +7,9 @@ namespace polyfem
 {
 static const std::array<std::vector<double>, 4> weights =
     {{{1},
-      {3. / 2., -1. / 2.},
-      {23. / 12., -16. / 12., 5. / 12.},
-      {55. / 24., -59. / 24., 37. / 24., -9. / 24.}}};
+      {-1. / 2., 3. / 2.},
+      {5. / 12., -16. / 12., 23. / 12.},
+      {-9. / 24., 37. / 24., -59. / 24., 55. / 24.}}};
 
 AdamsBashforth::AdamsBashforth(int order) : order_(order)
 {
