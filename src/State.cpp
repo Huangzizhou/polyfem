@@ -491,7 +491,7 @@ namespace polyfem
 		logger().info("Done!");
 
 		const int prev_b_size = local_boundary.size();
-		problem->setup_bc(*mesh, bases, pressure_bases, local_boundary, boundary_nodes, local_neumann_boundary, pressure_boundary_nodes);
+		problem->setup_bc(*mesh, bases, pressure_bases, local_boundary, boundary_nodes, local_neumann_boundary, pressure_dirichlet_boundary_nodes, pressure_boundary_nodes);
 		args["has_neumann"] = local_neumann_boundary.size() > 0 || local_boundary.size() < prev_b_size;
 		use_avg_pressure = !args["has_neumann"];
 
@@ -1146,15 +1146,23 @@ namespace polyfem
 		const int n_el = int(bases.size());
 
 		MatrixXd v_exact, v_approx;
+		MatrixXd p_exact, p_approx;
 		MatrixXd v_exact_grad(0, 0), v_approx_grad;
 
 		l2_err = 0;
+		double u_l2_err = 0;
+		double v_l2_err = 0;
 		h1_err = 0;
 		grad_max_err = 0;
 		h1_semi_err = 0;
 		linf_err = 0;
+		double u_linf_err = 0;
+		double v_linf_err = 0;
 		lp_err = 0;
 		// double pred_norm = 0;
+
+		double div_l2_err = 0;
+		double div_linf_err = 0;
 
 		static const int p = 8;
 
@@ -1202,13 +1210,18 @@ namespace polyfem
 			}
 
 			const auto err = problem->has_exact_sol() ? (v_exact - v_approx).eval().rowwise().norm().eval() : (v_approx).eval().rowwise().norm().eval();
+			const auto err_ = (v_exact - v_approx).cwiseAbs();
 			const auto err_grad = problem->has_exact_sol() ? (v_exact_grad - v_approx_grad).eval().rowwise().norm().eval() : (v_approx_grad).eval().rowwise().norm().eval();
+			const auto err_div = (v_approx_grad.col(0) + v_approx_grad.col(v_approx_grad.cols()-1)).eval().cwiseAbs().eval();
 
 			// for(long i = 0; i < err.size(); ++i)
 			// errors.push_back(err(i));
 
 			linf_err = max(linf_err, err.maxCoeff());
+			u_linf_err = max(u_linf_err, err_.col(0).maxCoeff());
+			v_linf_err = max(v_linf_err, err_.col(1).maxCoeff());
 			grad_max_err = max(linf_err, err_grad.maxCoeff());
+			div_linf_err = max(div_linf_err, err_div.maxCoeff());
 
 			// {
 			// 	const auto &mesh3d = *dynamic_cast<Mesh3D *>(mesh.get());
@@ -1251,13 +1264,52 @@ namespace polyfem
 			// }
 
 			l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			u_l2_err += (err_.col(0).array() * err_.col(0).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			v_l2_err += (err_.col(1).array() * err_.col(1).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			div_l2_err += (err_div.array() * err_div.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 			h1_err += (err_grad.array() * err_grad.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 			lp_err += (err.array().pow(p) * vals.det.array() * vals.quadrature.weights.array()).sum();
+		}
+
+		double p_l2_err = 0;
+		double p_linf_err = 0;
+
+		for (int e = 0; e < n_el; ++e)
+		{
+			if (iso_parametric())
+				vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
+			else
+				vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+
+			if (problem->has_exact_sol())
+				problem->exact_pressure(vals.val, tend, p_exact);
+
+			p_approx.resize(vals.val.rows(), 1);
+			p_approx.setZero();
+
+			const int n_loc_bases = int(vals.basis_values.size());
+
+			for (int i = 0; i < n_loc_bases; ++i)
+			{
+				const auto &val = vals.basis_values[i];
+
+				for (size_t ii = 0; ii < val.global.size(); ++ii)
+					p_approx += val.global[ii].val * pressure(val.global[ii].index) * val.val;
+			}
+
+			const auto err = problem->has_exact_sol() ? (p_exact - p_approx).eval().cwiseAbs().eval() : (p_approx).eval().cwiseAbs().eval();
+
+			p_linf_err = max(p_linf_err, err.maxCoeff());
+			p_l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 		}
 
 		h1_semi_err = sqrt(fabs(h1_err));
 		h1_err = sqrt(fabs(l2_err) + fabs(h1_err));
 		l2_err = sqrt(fabs(l2_err));
+		u_l2_err = sqrt(fabs(u_l2_err));
+		v_l2_err = sqrt(fabs(v_l2_err));
+		p_l2_err = sqrt(fabs(p_l2_err));
+		div_l2_err = sqrt(fabs(div_l2_err));
 
 		lp_err = pow(fabs(lp_err), 1. / p);
 
@@ -1273,16 +1325,256 @@ namespace polyfem
 		logger().info("-- H1 semi error: {}", h1_semi_err);
 		// logger().info("-- Perd norm: {}", pred_norm);
 
+		logger().info("-- Pressure L2 error: {}", p_l2_err);
+		logger().info("-- Pressure Linf error: {}", p_linf_err);
+		logger().info("-- Div L2 error: {}", div_l2_err);
+		logger().info("-- Div Linf error: {}", div_linf_err);
+
 		logger().info("-- Linf error: {}", linf_err);
 		logger().info("-- grad max error: {}", grad_max_err);
 
 		logger().info("total time: {}s", (building_basis_time + assembling_stiffness_mat_time + solving_time));
 
-		// {
-		// 	std::ofstream out("errs.txt");
-		// 	out<<err_per_el;
-		// 	out.close();
-		// }
+		{
+			std::ofstream out("errs.csv", std::ofstream::out | std::ofstream::app);
+			out << std::setprecision(16) << min_edge_length << "," << u_linf_err << "," << v_linf_err << "," << p_linf_err << "," <<
+				div_linf_err << "," << u_l2_err << "," << v_l2_err << "," << p_l2_err << "," << div_l2_err << "\n";
+			out.close();
+		}
+	}
+
+	void State::compute_errors(const double time)
+	{
+		if (!mesh)
+		{
+			logger().error("Load the mesh first!");
+			return;
+		}
+		if (n_bases <= 0)
+		{
+			logger().error("Build the bases first!");
+			return;
+		}
+		// if (stiffness.rows() <= 0) { logger().error("Assemble the stiffness matrix first!"); return; }
+		if (rhs.size() <= 0)
+		{
+			logger().error("Assemble the rhs first!");
+			return;
+		}
+		if (sol.size() <= 0)
+		{
+			logger().error("Solve the problem first!");
+			return;
+		}
+
+		if (!args["compute_error"])
+			return;
+
+		int actual_dim = 1;
+		if (!problem->is_scalar())
+			actual_dim = mesh->dimension();
+
+		igl::Timer timer;
+		timer.start();
+		logger().info("Computing errors...");
+		using std::max;
+
+		const int n_el = int(bases.size());
+
+		MatrixXd v_exact, v_approx;
+		MatrixXd p_exact, p_approx;
+		MatrixXd v_exact_grad(0, 0), v_approx_grad;
+
+		l2_err = 0;
+		double u_l2_err = 0;
+		double v_l2_err = 0;
+		h1_err = 0;
+		grad_max_err = 0;
+		h1_semi_err = 0;
+		linf_err = 0;
+		double u_linf_err = 0;
+		double v_linf_err = 0;
+		lp_err = 0;
+		// double pred_norm = 0;
+
+		double div_l2_err = 0;
+		double div_linf_err = 0;
+
+		static const int p = 8;
+
+		// Eigen::MatrixXd err_per_el(n_el, 5);
+		ElementAssemblyValues vals;
+
+		for (int e = 0; e < n_el; ++e)
+		{
+			// const auto &vals    = values[e];
+			// const auto &gvalues = iso_parametric() ? values[e] : geom_values[e];
+
+			if (iso_parametric())
+				vals.compute(e, mesh->is_volume(), bases[e], bases[e]);
+			else
+				vals.compute(e, mesh->is_volume(), bases[e], geom_bases[e]);
+
+			if (problem->has_exact_sol())
+			{
+				problem->exact(vals.val, time, v_exact);
+				problem->exact_grad(vals.val, time, v_exact_grad);
+			}
+
+			v_approx.resize(vals.val.rows(), actual_dim);
+			v_approx.setZero();
+
+			v_approx_grad.resize(vals.val.rows(), mesh->dimension() * actual_dim);
+			v_approx_grad.setZero();
+
+			const int n_loc_bases = int(vals.basis_values.size());
+
+			for (int i = 0; i < n_loc_bases; ++i)
+			{
+				const auto &val = vals.basis_values[i];
+
+				for (size_t ii = 0; ii < val.global.size(); ++ii)
+				{
+					for (int d = 0; d < actual_dim; ++d)
+					{
+						v_approx.col(d) += val.global[ii].val * sol(val.global[ii].index * actual_dim + d) * val.val;
+						v_approx_grad.block(0, d * val.grad_t_m.cols(), v_approx_grad.rows(), val.grad_t_m.cols()) += val.global[ii].val * sol(val.global[ii].index * actual_dim + d) * val.grad_t_m;
+					}
+				}
+			}
+
+			const auto err = problem->has_exact_sol() ? (v_exact - v_approx).eval().rowwise().norm().eval() : (v_approx).eval().rowwise().norm().eval();
+			const auto err_ = (v_exact - v_approx).cwiseAbs();
+			const auto err_grad = problem->has_exact_sol() ? (v_exact_grad - v_approx_grad).eval().rowwise().norm().eval() : (v_approx_grad).eval().rowwise().norm().eval();
+			const auto err_div = (v_approx_grad.col(0) + v_approx_grad.col(v_approx_grad.cols()-1)).eval().cwiseAbs().eval();
+
+			// for(long i = 0; i < err.size(); ++i)
+			// errors.push_back(err(i));
+
+			linf_err = max(linf_err, err.maxCoeff());
+			u_linf_err = max(u_linf_err, err_.col(0).maxCoeff());
+			v_linf_err = max(v_linf_err, err_.col(1).maxCoeff());
+			grad_max_err = max(linf_err, err_grad.maxCoeff());
+			div_linf_err = max(div_linf_err, err_div.maxCoeff());
+
+			// {
+			// 	const auto &mesh3d = *dynamic_cast<Mesh3D *>(mesh.get());
+			// 	const auto v0 = mesh3d.point(mesh3d.cell_vertex(e, 0));
+			// 	const auto v1 = mesh3d.point(mesh3d.cell_vertex(e, 1));
+			// 	const auto v2 = mesh3d.point(mesh3d.cell_vertex(e, 2));
+			// 	const auto v3 = mesh3d.point(mesh3d.cell_vertex(e, 3));
+
+			// 	Eigen::Matrix<double, 6, 3> ee;
+			// 	ee.row(0) = v0 - v1;
+			// 	ee.row(1) = v1 - v2;
+			// 	ee.row(2) = v2 - v0;
+
+			// 	ee.row(3) = v0 - v3;
+			// 	ee.row(4) = v1 - v3;
+			// 	ee.row(5) = v2 - v3;
+
+			// 	Eigen::Matrix<double, 6, 1> en = ee.rowwise().norm();
+
+			// 	// Eigen::Matrix<double, 3*4, 1> alpha;
+			// 	// alpha(0) = angle3(e.row(0), -e.row(1));	 	alpha(1) = angle3(e.row(1), -e.row(2));	 	alpha(2) = angle3(e.row(2), -e.row(0));
+			// 	// alpha(3) = angle3(e.row(0), -e.row(4));	 	alpha(4) = angle3(e.row(4), e.row(3));	 	alpha(5) = angle3(-e.row(3), -e.row(0));
+			// 	// alpha(6) = angle3(-e.row(4), -e.row(1));	alpha(7) = angle3(e.row(1), -e.row(5));	 	alpha(8) = angle3(e.row(5), e.row(4));
+			// 	// alpha(9) = angle3(-e.row(2), -e.row(5));	alpha(10) = angle3(e.row(5), e.row(3));		alpha(11) = angle3(-e.row(3), e.row(2));
+
+			// 	const double S = (ee.row(0).cross(ee.row(1)).norm() + ee.row(0).cross(ee.row(4)).norm() + ee.row(4).cross(ee.row(1)).norm() + ee.row(2).cross(ee.row(5)).norm()) / 2;
+			// 	const double V = std::abs(ee.row(3).dot(ee.row(2).cross(-ee.row(0))))/6;
+			// 	const double rho = 3 * V / S;
+			// 	const double hp = en.maxCoeff();
+			// 	const int pp = disc_orders(e);
+			// 	const int p_ref = args["discr_order"];
+
+			// 	err_per_el(e, 0) = err.mean();
+			// 	err_per_el(e, 1) = err.maxCoeff();
+			// 	err_per_el(e, 2) = std::pow(hp, pp+1)/(rho/hp); // /std::pow(average_edge_length, p_ref+1) * (sqrt(6)/12);
+			// 	err_per_el(e, 3) = rho/hp;
+			// 	err_per_el(e, 4) = (vals.det.array() * vals.quadrature.weights.array()).sum();
+
+			// 	// pred_norm += (pow(std::pow(hp, pp+1)/(rho/hp),p) * vals.det.array() * vals.quadrature.weights.array()).sum();
+			// }
+
+			l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			u_l2_err += (err_.col(0).array() * err_.col(0).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			v_l2_err += (err_.col(1).array() * err_.col(1).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			div_l2_err += (err_div.array() * err_div.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			h1_err += (err_grad.array() * err_grad.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			lp_err += (err.array().pow(p) * vals.det.array() * vals.quadrature.weights.array()).sum();
+		}
+
+		double p_l2_err = 0;
+		double p_linf_err = 0;
+
+		for (int e = 0; e < n_el; ++e)
+		{
+			if (iso_parametric())
+				vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
+			else
+				vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+
+			if (problem->has_exact_sol())
+				problem->exact_pressure(vals.val, time, p_exact);
+
+			p_approx.resize(vals.val.rows(), 1);
+			p_approx.setZero();
+
+			const int n_loc_bases = int(vals.basis_values.size());
+
+			for (int i = 0; i < n_loc_bases; ++i)
+			{
+				const auto &val = vals.basis_values[i];
+
+				for (size_t ii = 0; ii < val.global.size(); ++ii)
+					p_approx += val.global[ii].val * pressure(val.global[ii].index) * val.val;
+			}
+
+			const auto err = problem->has_exact_sol() ? (p_exact - p_approx).eval().cwiseAbs().eval() : (p_approx).eval().cwiseAbs().eval();
+
+			p_linf_err = max(p_linf_err, err.maxCoeff());
+			p_l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+		}
+
+		h1_semi_err = sqrt(fabs(h1_err));
+		h1_err = sqrt(fabs(l2_err) + fabs(h1_err));
+		l2_err = sqrt(fabs(l2_err));
+		u_l2_err = sqrt(fabs(u_l2_err));
+		v_l2_err = sqrt(fabs(v_l2_err));
+		p_l2_err = sqrt(fabs(p_l2_err));
+		div_l2_err = sqrt(fabs(div_l2_err));
+
+		lp_err = pow(fabs(lp_err), 1. / p);
+
+		// pred_norm = pow(fabs(pred_norm), 1./p);
+
+		timer.stop();
+		computing_errors_time = timer.getElapsedTime();
+		logger().info(" took {}s", computing_errors_time);
+
+		logger().info("-- L2 error: {}", l2_err);
+		logger().info("-- Lp error: {}", lp_err);
+		logger().info("-- H1 error: {}", h1_err);
+		logger().info("-- H1 semi error: {}", h1_semi_err);
+		// logger().info("-- Perd norm: {}", pred_norm);
+
+		logger().info("-- Pressure L2 error: {}", p_l2_err);
+		logger().info("-- Pressure Linf error: {}", p_linf_err);
+		logger().info("-- Div L2 error: {}", div_l2_err);
+		logger().info("-- Div Linf error: {}", div_linf_err);
+
+		logger().info("-- Linf error: {}", linf_err);
+		logger().info("-- grad max error: {}", grad_max_err);
+
+		logger().info("total time: {}s", (building_basis_time + assembling_stiffness_mat_time + solving_time));
+
+		{
+			std::ofstream out(args["err_path"], std::ofstream::out | std::ofstream::app);
+			out << std::setprecision(16) << min_edge_length << "," << u_linf_err << "," << v_linf_err << "," << p_linf_err << "," <<
+				div_linf_err << "," << u_l2_err << "," << v_l2_err << "," << p_l2_err << "," << div_l2_err << "\n";
+			out.close();
+		}
 	}
 
 } // namespace polyfem

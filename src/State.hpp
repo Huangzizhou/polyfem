@@ -119,6 +119,7 @@ namespace polyfem
 		std::vector<int> boundary_nodes;
 		//list of neumann boundary nodes
 		std::vector<int> pressure_boundary_nodes;
+		std::vector<int> pressure_dirichlet_boundary_nodes;
 		//mapping from elements to nodes for dirichlet boundary conditions
 		std::vector<LocalBoundary> local_boundary;
 		//mapping from elements to nodes for neumann boundary conditions
@@ -349,6 +350,7 @@ namespace polyfem
 
 		//compute the errors, not part of solve
 		void compute_errors();
+		void compute_errors(const double time);
 		//saves all data on the disk according to the input params
 		void export_data();
 		//compute pressure integrals

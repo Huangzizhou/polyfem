@@ -56,6 +56,9 @@ namespace polyfem
 		//return the formulation
 		inline const std::string &formulation() const { return formulation_; }
 
+		//compute quadrature for boundary facet, uv are local (ref) values, samples are global coordinates, used for neumann
+		bool boundary_quadrature(const LocalBoundary &local_boundary, const int order, const bool skip_computation, Eigen::MatrixXd &uv, Eigen::MatrixXd &points, Eigen::MatrixXd &normals, Eigen::VectorXd &weights, Eigen::VectorXi &global_primitive_ids) const;
+
 	private:
 		//set boundary condition
 		//the 2 lambdas are callback to dirichlet df and neumann nf
@@ -72,8 +75,6 @@ namespace polyfem
 
 		//sample boundary facet, uv are local (ref) values, samples are global coordinates, used for dirichlet
 		bool sample_boundary(const LocalBoundary &local_boundary, const int n_samples, const bool skip_computation, Eigen::MatrixXd &uv, Eigen::MatrixXd &samples, Eigen::VectorXi &global_primitive_ids) const;
-		//compute quadrature for boundary facet, uv are local (ref) values, samples are global coordinates, used for neumann
-		bool boundary_quadrature(const LocalBoundary &local_boundary, const int order, const bool skip_computation, Eigen::MatrixXd &uv, Eigen::MatrixXd &points, Eigen::MatrixXd &normals, Eigen::VectorXd &weights, Eigen::VectorXi &global_primitive_ids) const;
 
 		const AssemblerUtils &assembler_;
 		const Mesh &mesh_;

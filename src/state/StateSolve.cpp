@@ -57,30 +57,32 @@ namespace polyfem
         const double viscosity_ = build_json_params()["viscosity"];
         const int BDF_order = args["BDF_order"];
 
+		std::vector<int> bnd_nodes;
+		bnd_nodes.reserve(boundary_nodes.size() / mesh->dimension());
+		for (auto node : boundary_nodes)
+		{
+			if (!(node % mesh->dimension()))
+				continue;
+			bnd_nodes.push_back(node / mesh->dimension());
+		}
+
+		Eigen::MatrixXd local_pts;
+		if (mesh->dimension() == 2)
+		{
+			if (gbases[0].bases.size() == 3)
+				autogen::p_nodes_2d(args["discr_order"], local_pts);
+			else
+				autogen::q_nodes_2d(args["discr_order"], local_pts);
+		}
+		else
+		{
+			if (gbases[0].bases.size() == 4)
+				autogen::p_nodes_3d(args["discr_order"], local_pts);
+			else
+				autogen::q_nodes_3d(args["discr_order"], local_pts);
+		}
+
         if (BDF_order == 1) {
-            Eigen::MatrixXd local_pts;
-            if (mesh->dimension() == 2)
-            {
-                if (gbases[0].bases.size() == 3)
-                    autogen::p_nodes_2d(args["discr_order"], local_pts);
-                else
-                    autogen::q_nodes_2d(args["discr_order"], local_pts);
-            }
-            else
-            {
-                if (gbases[0].bases.size() == 4)
-                    autogen::p_nodes_3d(args["discr_order"], local_pts);
-                else
-                    autogen::q_nodes_3d(args["discr_order"], local_pts);
-            }
-            std::vector<int> bnd_nodes;
-            bnd_nodes.reserve(boundary_nodes.size() / mesh->dimension());
-            for (auto node : boundary_nodes)
-            {
-                if (!(node % mesh->dimension()))
-                    continue;
-                bnd_nodes.push_back(node / mesh->dimension());
-            }
 
             logger().info("Matrices assembly...");
             StiffnessMatrix stiffness_viscosity, mixed_stiffness, velocity_mass;
@@ -152,7 +154,7 @@ namespace polyfem
 
                 /* incompressibility */
                 logger().info("Pressure projection...");
-                ss.solve_pressure(stiffness, mixed_stiffness, integrals, pressure_boundary_nodes, sol, pressure);
+                ss.solve_pressure(stiffness, mixed_stiffness, integrals, pressure_dirichlet_boundary_nodes, sol, pressure);
 
                 ss.projection(gbases, bases, pressure_bases, local_pts, pressure, sol);
                 // ss.projection(velocity_mass, mixed_stiffness, boundary_nodes, sol, pressure);
@@ -182,6 +184,20 @@ namespace polyfem
             }
         }
         else {
+
+			std::vector<int> pressure_bnd_nodes;
+			pressure_bnd_nodes.reserve(pressure_boundary_nodes.size() / mesh->dimension());
+			for (auto node : pressure_boundary_nodes)
+			{
+				if (!(node % mesh->dimension()))
+					continue;
+				pressure_bnd_nodes.push_back(node / mesh->dimension());
+			}
+
+			std::vector<bool> pressure_boundary_nodes_mask;
+			pressure_boundary_nodes_mask.assign(n_bases, false);
+			for (auto node : pressure_bnd_nodes)
+				pressure_boundary_nodes_mask[node] = true;
             // coefficient matrix of viscosity
             assembler.assemble_problem("Stokes", mesh->is_volume(), n_bases, bases, gbases, ass_vals_cache, stiffness);
             // assembler.assemble_mixed_problem("Stokes", mesh->is_volume(), n_pressure_bases, n_bases, pressure_bases, bases, gbases, pressure_ass_vals_cache, ass_vals_cache, mixed_stiffness);
@@ -191,21 +207,86 @@ namespace polyfem
 			StiffnessMatrix pressure_stiffness;
             assembler.assemble_problem("Laplacian", mesh->is_volume(), n_pressure_bases, pressure_bases, gbases, pressure_ass_vals_cache, pressure_stiffness);
 
+			auto set_exact_solution = [&](const double t, Eigen::MatrixXd& sol_c) -> void {
+				sol_c.resize(dim*n_bases, 1);
+				sol_c.setZero();
+
+				std::vector<bool> flag(n_bases, false);
+#ifdef POLYFEM_WITH_TBB
+    			tbb::parallel_for(0, n_el, 1, [&](int e)
+#else
+    			for (int e = 0; e < n_el; e++)
+#endif
+                {
+					ElementAssemblyValues vals;
+					vals.compute(e, mesh->is_volume(), local_pts, bases[e], gbases[e]);
+
+					Eigen::MatrixXd vel_exact;
+                    problem->exact(vals.val, t, vel_exact);
+
+                    const int n_loc_bases = int(vals.basis_values.size());
+                    for (int i = 0; i < n_loc_bases; ++i) {
+						const auto &val = vals.basis_values[i];
+						assert(val.global.size() == 1);
+						if (!flag[val.global[0].index]) {
+							flag[val.global[0].index] = true;
+							for (int d = 0; d < dim; d++) {
+								sol_c(val.global[0].index * dim + d) = vel_exact(i, d);
+							}
+						}
+                    }
+                }
+#ifdef POLYFEM_WITH_TBB
+    			);
+#endif
+			};
+			auto set_exact_force = [&](const double t, Eigen::MatrixXd& F) -> void {
+				F.resize(dim*n_bases, 1);
+				F.setZero();
+
+				std::vector<bool> flag(n_bases, false);
+#ifdef POLYFEM_WITH_TBB
+    			tbb::parallel_for(0, n_el, 1, [&](int e)
+#else
+    			for (int e = 0; e < n_el; e++)
+#endif
+                {
+					ElementAssemblyValues vals;
+					vals.compute(e, mesh->is_volume(), local_pts, bases[e], gbases[e]);
+
+					AssemblerUtils assembler;
+					Eigen::MatrixXd force;
+					problem->rhs(assembler, formulation(), local_pts, t, force);
+
+                    const int n_loc_bases = int(vals.basis_values.size());
+                    for (int i = 0; i < n_loc_bases; ++i) {
+						const auto &val = vals.basis_values[i];
+						assert(val.global.size() == 1);
+						if (!flag[val.global[0].index]) {
+							flag[val.global[0].index] = true;
+							for (int d = 0; d < dim; d++) {
+								F(val.global[0].index * dim + d) = force(i, d);
+							}
+						}
+                    }
+                }
+#ifdef POLYFEM_WITH_TBB
+    			);
+#endif
+			};
 			auto set_exact_pressure = [&](const double t, Eigen::MatrixXd& pressure_c) -> void {
 				pressure_c.resize(n_pressure_bases, 1);
 				pressure_c.setZero();
-				Eigen::VectorXd rhs_pressure(n_pressure_bases);
-				rhs_pressure.setZero();
 
-                ElementAssemblyValues vals;
-                for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
-
-                    const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
-                    Eigen::MatrixXd quadrature_points = vals.quadrature.points;
+				std::vector<bool> flag(n_pressure_bases, false);
+#ifdef POLYFEM_WITH_TBB
+    			tbb::parallel_for(0, n_el, 1, [&](int e)
+#else
+    			for (int e = 0; e < n_el; e++)
+#endif
+				{
+					ElementAssemblyValues vals;
+					vals.compute(e, mesh->is_volume(), local_pts, pressure_bases[e], gbases[e]);
 
 					Eigen::MatrixXd p_exact;
                     problem->exact_pressure(vals.val, t, p_exact);
@@ -214,69 +295,29 @@ namespace polyfem
                     for (int i = 0; i < n_loc_pressure_bases; ++i) {
                         const auto &val = vals.basis_values[i];
                         assert(val.global.size() == 1);
-                        rhs_pressure(val.global[0].index) += (p_exact.array() * val.val.array() * da.array()).sum() * val.global[0].val;
+						if (!flag[val.global[0].index]) {
+							flag[val.global[0].index] = true;
+							pressure_c(val.global[0].index) = p_exact(i);
+						}
                     }
                 }
-
-				std::unique_ptr<polysolve::LinearSolver> solver = LinearSolver::create(args["solver_type"], args["precond_type"]);
-				solver->setParameters(params);
-				Eigen::VectorXd p = pressure_c;
-				StiffnessMatrix pressure_mass;
-				assembler.assemble_mass_matrix("Laplacian", mesh->is_volume(), n_pressure_bases, density, pressure_bases, gbases, pressure_ass_vals_cache, pressure_mass);
-				dirichlet_solve(*solver, pressure_mass, rhs_pressure, std::vector<int>(), p, n_pressure_bases, "", false, true, false);
-				pressure_c = p;
+#ifdef POLYFEM_WITH_TBB
+    			);
+#endif
 			};
 
-			// initialize pressure field
+			// initialization
+			set_exact_solution(0., sol);
 			set_exact_pressure(0., pressure);
 			// pressure.resize(n_pressure_bases, 1);
 			// pressure.setZero();
 
-            auto assemble_picard = [&](const Eigen::MatrixXd& sol_c, Eigen::MatrixXd& rhs_) -> void {
+			auto assemble_rhs_pressure_1 = [&](const Eigen::MatrixXd& sol_c, const double alpha, const double time, Eigen::VectorXd& rhs_) -> void {
                 ElementAssemblyValues vals;
-                rhs_.resize(n_bases*dim, 1);
+                rhs_.resize(n_pressure_bases, 1);
                 rhs_.setZero();
                 for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), bases[e], geom_bases[e]);
-
-                    const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
-                    Eigen::MatrixXd quadrature_points = vals.quadrature.points;
-
-                    Eigen::MatrixXd vel, vel_grad;
-                    interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
-                    
-                    Eigen::MatrixXd U_gradU(vel.rows(), dim);
-                    U_gradU.setZero();
-
-                    for (int j = 0; j < vel.rows(); j++)
-                        for (int d = 0; d < dim; ++d)
-                            for (int d_ = 0; d_ < dim; ++d_)
-                                U_gradU(j, d) += vel(j, d_) * vel_grad(j, d * dim + d_) * da(j);
-
-                    const int n_loc_bases = int(vals.basis_values.size());
-                    for (int i = 0; i < n_loc_bases; ++i) {
-                        const auto &val = vals.basis_values[i];
-                        assert(val.global.size() == 1);
-
-                        for (int j = 0; j < vel.rows(); j++)
-                            for (int d = 0; d < dim; ++d)
-                                for (int d_ = 0; d_ < dim; ++d_)
-                                    rhs_(val.global[0].index * dim + d) += U_gradU(j, d) * val.val(j) * val.global[0].val;
-                    }
-                }
-            };
-            auto assemble_gradU_gradUT_p = [&](const Eigen::MatrixXd& sol_c, Eigen::MatrixXd& rhs_gradU_gradUT_p) -> void {
-                ElementAssemblyValues vals;
-                rhs_gradU_gradUT_p.resize(n_pressure_bases, 1);
-                rhs_gradU_gradUT_p.setZero();
-                for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+                    vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
 
                     const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
                     Eigen::MatrixXd quadrature_points = vals.quadrature.points;
@@ -288,57 +329,40 @@ namespace polyfem
                     gradU_gradUT.setZero();
                     for (int d1 = 0; d1 < dim; d1++)
                         for (int d2 = 0; d2 < dim; d2++)
-                            gradU_gradUT += vel_grad.col(d1 * dim + d2).cwiseProduct(vel_grad.col(d2 * dim + d1));
-					gradU_gradUT = gradU_gradUT.array() * da.array();
-
-                    const int n_loc_pressure_bases = int(vals.basis_values.size());
-                    for (int i = 0; i < n_loc_pressure_bases; ++i) {
-                        const auto &val = vals.basis_values[i];
-                        assert(val.global.size() == 1);
-                        rhs_gradU_gradUT_p(val.global[0].index) += (gradU_gradUT.array() * val.val.array()).sum() * val.global[0].val;
-                    }
-                }
-            };
-
-            auto assemble_divU_p = [&](const Eigen::MatrixXd& sol_c, Eigen::MatrixXd& rhs_divU_p) -> void {
-                ElementAssemblyValues vals;
-                rhs_divU_p.resize(n_pressure_bases, 1);
-                rhs_divU_p.setZero();
-                for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
-
-                    const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
-                    Eigen::MatrixXd quadrature_points = vals.quadrature.points;
-
-                    Eigen::MatrixXd vel, vel_grad;
-                    interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
+                            gradU_gradUT += (vel_grad.col(d1 * dim + d2).array() * vel_grad.col(d2 * dim + d1).array()).matrix();
                     
                     Eigen::MatrixXd vel_div(vel_grad.rows(), 1);
                     vel_div.setZero();
                     for (int d = 0; d < dim; d++)
                         vel_div += vel_grad.col(d * dim + d);
-					vel_div = vel_div.array() * da.array();
+
+					Eigen::MatrixXd force;
+					set_exact_force(time, force);
+                    Eigen::MatrixXd f, f_grad;
+                    interpolate_at_local_vals(e, dim, bases, quadrature_points, force, f, f_grad);
+
+					Eigen::MatrixXd f_div(f_grad.rows(), 1);
+					f_div.setZero();
+					for (int d = 0; d < dim; d++)
+						f_div += f_grad.col(d * dim + d);
+
+					Eigen::MatrixXd final_vec = gradU_gradUT - alpha * vel_div - f_div;
+					final_vec = final_vec.array() * da.array();
 
                     const int n_loc_pressure_bases = int(vals.basis_values.size());
                     for (int i = 0; i < n_loc_pressure_bases; ++i) {
                         const auto &val = vals.basis_values[i];
                         assert(val.global.size() == 1);
-                        rhs_divU_p(val.global[0].index) += (vel_div.array() * val.val.array()).sum() * val.global[0].val;
+                        rhs_(val.global[0].index) += (final_vec.array() * val.val.array()).sum() * val.global[0].val;
                     }
                 }
             };
-            auto assemble_U_gradp = [&](const Eigen::MatrixXd& sol_c, Eigen::MatrixXd& rhs_U_gradP) -> void {
+            auto assemble_rhs_pressure_2 = [&](const Eigen::MatrixXd& sol_c, const double alpha, const double time, Eigen::VectorXd& rhs_) -> void {
                 ElementAssemblyValues vals;
-                rhs_U_gradP.resize(n_pressure_bases, 1);
-                rhs_U_gradP.setZero();
+                rhs_.resize(n_pressure_bases, 1);
+                rhs_.setZero();
                 for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+                    vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
 
                     const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
                     Eigen::MatrixXd quadrature_points = vals.quadrature.points;
@@ -346,23 +370,43 @@ namespace polyfem
                     Eigen::MatrixXd vel, vel_grad;
                     interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
 
+                    Eigen::MatrixXd U_gradU(vel_grad.rows(), vel_grad.cols());
+                    U_gradU.setZero();
+                    for (int d1 = 0; d1 < dim; d1++) {
+						for (int d2 = 0; d2 < dim; d2++) {
+							U_gradU.col(d1) += (vel.col(d2).array() * vel_grad.col(d1 * dim + d2).array()).matrix();
+						}
+					}
+
+                    Eigen::MatrixXd vel_div(vel_grad.rows(), 1);
+                    vel_div.setZero();
+                    for (int d = 0; d < dim; d++)
+                        vel_div += vel_grad.col(d * dim + d);
+
+					Eigen::MatrixXd force;
+					set_exact_force(time, force);
+                    Eigen::MatrixXd f, f_grad;
+                    interpolate_at_local_vals(e, dim, bases, quadrature_points, force, f, f_grad);
+
+					Eigen::MatrixXd final_mat = f - U_gradU;
+					for (int d = 0; d < dim; d++)
+						final_mat.col(d) = final_mat.col(d).array() * da.array();
+
                     const int n_loc_pressure_bases = int(vals.basis_values.size());
-                    for (int d = 0; d < dim; d++) {
-                        Eigen::VectorXd vel_ = vel.col(d);
-						vel_ = vel_.array() * da.array();
-                        for (int i = 0; i < n_loc_pressure_bases; ++i) {
-                            const auto &val = vals.basis_values[i];
-                            assert(val.global.size() == 1);
-                            Eigen::VectorXd gradP_ = val.grad_t_m.col(d);
-                            rhs_U_gradP(val.global[0].index) += (vel_.array() * gradP_.array()).sum() * val.global[0].val;
-                        }
+                    for (int i = 0; i < n_loc_pressure_bases; ++i) {
+                        const auto &val = vals.basis_values[i];
+                        assert(val.global.size() == 1);
+						for (int d = 0; d < dim; d++)
+							rhs_(val.global[0].index) += (final_mat.col(d).array() * val.grad_t_m.col(d).array()).sum() * val.global[0].val;
+						rhs_(val.global[0].index) -= alpha * (vel_div.array() * val.val.array()).sum() * val.global[0].val;
                     }
                 }
             };
-			auto assemble_v_gradP = [&](const Eigen::MatrixXd& pressure_c, Eigen::MatrixXd& rhs_v_gradP) -> void {
+
+			auto assemble_velocity_rhs = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& pressure_c, const double time, Eigen::MatrixXd& v_rhs) -> void {
                 ElementAssemblyValues vals;
-                rhs_v_gradP.resize(n_bases*dim, 1);
-                rhs_v_gradP.setZero();
+                v_rhs.resize(n_bases*dim, 1);
+                v_rhs.setZero();
                 for (int e = 0; e < n_el; e++) {
                     if (iso_parametric())
                         vals.compute(e, mesh->is_volume(), bases[e], bases[e]);
@@ -372,152 +416,151 @@ namespace polyfem
                     const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
                     Eigen::MatrixXd quadrature_points = vals.quadrature.points;
 
+                    Eigen::MatrixXd vel, vel_grad;
+                    interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
+                    
                     Eigen::MatrixXd pres, pres_grad;
                     interpolate_at_local_vals(e, 1, pressure_bases, quadrature_points, pressure_c, pres, pres_grad);
 
+					Eigen::MatrixXd final_mat = -pres_grad;
+					for (int d = 0; d < dim; ++d) {
+						for (int d_ = 0; d_ < dim; ++d_)
+							final_mat.col(d) -= (vel.col(d_).array() * vel_grad.col(d * dim + d_).array()).matrix();
+						final_mat.col(d) = (final_mat.col(d).array() * da.array()).matrix();
+					}
+
                     const int n_loc_bases = int(vals.basis_values.size());
-                    for (int d = 0; d < dim; d++) {
-                        Eigen::VectorXd dpdxi = pres_grad.col(d);
-						dpdxi = dpdxi.array() * da.array();
-                        for (int i = 0; i < n_loc_bases; ++i) {
-                            const auto &val = vals.basis_values[i];
-                            assert(val.global.size() == 1);
-                            rhs_v_gradP(val.global[0].index * dim + d) += (dpdxi.array() * val.val.array()).sum() * val.global[0].val;
-                        }
+                    for (int i = 0; i < n_loc_bases; ++i) {
+                        const auto &val = vals.basis_values[i];
+                        assert(val.global.size() == 1);
+
+						for (int d = 0; d < dim; ++d)
+							v_rhs(val.global[0].index * dim + d) += (final_mat.col(d).array() * val.val.array()).sum() * val.global[0].val;
                     }
                 }
+				v_rhs -= stiffness * sol_c;
+				Eigen::MatrixXd force_rhs(v_rhs.rows(), v_rhs.cols()); force_rhs.setZero();
+				// rhs_assembler.compute_energy_grad(local_boundary, boundary_nodes, density, args["n_boundary_samples"], local_neumann_boundary, v_rhs, time, force_rhs);
+				v_rhs = v_rhs + force_rhs;
 			};
-			
-			auto assemble_velocity_rhs = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& pressure_c, const double time, Eigen::MatrixXd& v_rhs) -> void {
-				Eigen::MatrixXd vec1, vec2;
-				assemble_picard(sol_c, vec1);
-				assemble_v_gradP(pressure_c, vec2);
-
-				v_rhs = - vec1 - stiffness * sol_c - vec2;
-
-                Eigen::MatrixXd current_rhs(rhs.rows(), rhs.cols()); current_rhs.setZero();
-                rhs_assembler.compute_energy_grad(local_boundary, boundary_nodes, density, args["n_boundary_samples"], local_neumann_boundary, rhs, time, current_rhs);
-				rhs = rhs + current_rhs;
-			};
-
-            AdamsBashforth AB(2);
-			assemble_velocity_rhs(sol, pressure, 0., rhs);
-            AB.new_solution(rhs);
-			auto rhs_n = rhs;
-
-			// compute boundary edge normals
-			// todo: if velocity and pressure are not the same order
-			Eigen::MatrixXd edge_normals(mesh->n_edges(), dim);
-			edge_normals.setZero();
-
-			std::vector<bool> boundary_nodes_mask;
-			boundary_nodes_mask.assign(n_bases, false);
-			for (auto node : boundary_nodes)
-			{
-				if (!(node % mesh->dimension()))
-					continue;
-				boundary_nodes_mask[node / mesh->dimension()] = true;
-			}
-			assert(dim == 2);
-			Mesh2D &mesh2d = *dynamic_cast<Mesh2D *>(mesh.get());
-			for (const auto &lb : local_boundary)
-			{
-				const int e = lb.element_id();
-				for (int i = 0; i < lb.size(); i++) {
-					const int edge_id = lb.global_primitive_id(i);
-					const int v1 = mesh2d.edge_vertex(edge_id, 0);
-					const int v2 = mesh2d.edge_vertex(edge_id, 1);
-					RowVectorNd edge = mesh2d.point(v2) - mesh2d.point(v1);
-					const double norm = edge.norm();
-					edge_normals(edge_id, 0) = edge(1) / norm;
-					edge_normals(edge_id, 1) = -edge(0) / norm;
-
-					// determine sign
-					RowVectorNd mid_point = 0.5 * (mesh2d.point(v2) + mesh2d.point(v1));
-					RowVectorNd third_point;
-					for (int third_id = 0; third_id < 3; third_id++) {
-						int third = mesh2d.cell_vertex(e, third_id);
-						if (third == v1 || third == v2) continue;
-						else third_point = mesh2d.point(third);
-					}
-					bool sign = (third_point - mid_point).dot(edge_normals.row(edge_id)) > 0;
-					if (sign)
-						edge_normals.row(edge_id) *= -1;
-				}
-			}
 
 			Eigen::MatrixXd node_normals(n_bases, dim);
 			node_normals.setZero();
-			for (const auto &lb : local_boundary)
 			{
-				ElementAssemblyValues vals;
-				const int e = lb.element_id();
-				if (iso_parametric())
-					vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-				else
-					vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+				// compute boundary edge normals
+				// todo: if velocity and pressure are not the same order
+				Eigen::MatrixXd edge_normals(mesh->n_edges(), dim);
+				edge_normals.setZero();
 
-				const int n_loc_pressure_bases = int(vals.basis_values.size());
-				for (int i = 0; i < n_loc_pressure_bases; i++) {
-					const auto &val = vals.basis_values[i];
-					if (!boundary_nodes_mask[val.global[0].index]) continue;
-					int local_edge_id = -1;
-					if (i < 3) {
-						const int e1 = (i+2)%3;
-						const int e2 = i;
-						for (int j = 0; j < lb.size(); j++) {
-							if (e1 == lb[j] || e2 == lb[j]) {
-								local_edge_id = j;
-								break;
+				assert(dim == 2);
+				Mesh2D &mesh2d = *dynamic_cast<Mesh2D *>(mesh.get());
+				for (const auto &lb : local_boundary)
+				{
+					const int e = lb.element_id();
+					for (int i = 0; i < lb.size(); i++) {
+						const int edge_id = lb.global_primitive_id(i);
+						const int v1 = mesh2d.edge_vertex(edge_id, 0);
+						const int v2 = mesh2d.edge_vertex(edge_id, 1);
+						RowVectorNd edge = mesh2d.point(v2) - mesh2d.point(v1);
+						const double norm = edge.norm();
+						edge_normals(edge_id, 0) = edge(1) / norm;
+						edge_normals(edge_id, 1) = -edge(0) / norm;
+
+						// determine sign
+						RowVectorNd mid_point = 0.5 * (mesh2d.point(v2) + mesh2d.point(v1));
+						RowVectorNd third_point;
+						for (int third_id = 0; third_id < 3; third_id++) {
+							int third = mesh2d.cell_vertex(e, third_id);
+							if (third == v1 || third == v2) continue;
+							else third_point = mesh2d.point(third);
+						}
+						bool sign = (third_point - mid_point).dot(edge_normals.row(edge_id)) > 0;
+						if (sign)
+							edge_normals.row(edge_id) *= -1;
+					}
+				}
+
+				Eigen::VectorXi traverse_times(n_bases); traverse_times.setZero();
+				for (const auto &lb : local_boundary)
+				{
+					ElementAssemblyValues vals;
+					const int e = lb.element_id();
+					vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
+
+					const int n_loc_pressure_bases = int(vals.basis_values.size());
+					for (int i = 0; i < n_loc_pressure_bases; i++) {
+						const auto &val = vals.basis_values[i];
+						if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
+						int local_edge_id = -1;
+						if (i < 3) {
+							const int e1 = (i+2)%3;
+							const int e2 = i;
+							for (int j = 0; j < lb.size(); j++) {
+								if (e1 == lb[j] || e2 == lb[j]) {
+									local_edge_id = j;
+									break;
+								}
 							}
 						}
-					}
-					else if (i < 3 + 3 * (disc_orders[e] - 1)) {
-						const int e_ = (i - 3) / (int)(disc_orders[e] - 1);
-						for (int j = 0; j < lb.size(); j++) {
-							if (e_ == lb[j]) {
-								local_edge_id = j;
-								break;
+						else if (i < 3 + 3 * (disc_orders[e] - 1)) {
+							const int e_ = (i - 3) / (int)(disc_orders[e] - 1);
+							for (int j = 0; j < lb.size(); j++) {
+								if (e_ == lb[j]) {
+									local_edge_id = j;
+									break;
+								}
 							}
 						}
-					}
-					else
-						continue;
+						else
+							continue;
 
-					node_normals.row(val.global[0].index) = edge_normals.row(lb.global_primitive_id(local_edge_id));
+						node_normals.row(val.global[0].index) += edge_normals.row(lb.global_primitive_id(local_edge_id));
+						traverse_times(val.global[0].index)++;
+					}
+				}
+				for (int i = 0; i < n_bases; i++) {
+					if (traverse_times(i) > 1)
+						node_normals.row(i) /= traverse_times(i);
 				}
 			}
 
-			auto set_pressure_neumann_bc = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& sol_before, const double dt, Eigen::VectorXd& rhs_) -> void {
+			auto set_pressure_neumann_bc_1 = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& dsol_dt, const double time, Eigen::VectorXd& rhs_) -> void {
 				ElementAssemblyValues vals;
 				for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+					if (iso_parametric())
+						vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
+					else
+						vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
 
-                    const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
-                    Eigen::MatrixXd quadrature_points = vals.quadrature.points;
+					const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
+					Eigen::MatrixXd quadrature_points = vals.quadrature.points;
 
-                    Eigen::MatrixXd vel, vel_grad;
-                    interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
+					Eigen::MatrixXd vel, vel_grad;
+					interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
 
-					Eigen::MatrixXd vel_before, vel_grad_before;
-					interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_before, vel_before, vel_grad_before);
+					Eigen::MatrixXd dvel_dt, dvel_dt_grad;
+					interpolate_at_local_vals(e, dim, bases, quadrature_points, dsol_dt, dvel_dt, dvel_dt_grad);
 
-					Eigen::MatrixXd dudt_ugradu = (vel - vel_before) / dt;
+					Eigen::MatrixXd force;
+					AssemblerUtils assembler;
+					problem->rhs(assembler, formulation(), quadrature_points, time, force);
+
+					Eigen::MatrixXd final_mat = dvel_dt;
 					for (int d = 0; d < dim; ++d)
 						for (int d_ = 0; d_ < dim; ++d_)
-							dudt_ugradu.col(d) += vel.col(d_).cwiseProduct(vel_grad.col(d * dim + d_));
+							final_mat.col(d) += (vel.col(d_).array() * vel_grad.col(d * dim + d_).array()).matrix();
 
-                    const int n_loc_pressure_bases = int(vals.basis_values.size());
+					final_mat = force - final_mat;
+					for (int d = 0; d < dim; d++)
+						final_mat.col(d) = final_mat.col(d).array() * da.array();
+
+					const int n_loc_pressure_bases = int(vals.basis_values.size());
 					for (int d = 0; d < dim; d++) {
-						Eigen::VectorXd tmp = dudt_ugradu.col(d).cwiseProduct(da);
 						for (int i = 0; i < n_loc_pressure_bases; ++i) {
 							const auto &val = vals.basis_values[i];
-							if (!boundary_nodes_mask[val.global[0].index]) continue;
+							if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
 
-							rhs_(val.global[0].index) -= (tmp.array() * val.val.array()).sum() * node_normals(val.global[0].index, d) * val.global[0].val;
+							rhs_(val.global[0].index) += (final_mat.col(d).array() * val.val.array()).sum() * node_normals(val.global[0].index, d) * val.global[0].val;
 						}
 					}
 
@@ -525,10 +568,10 @@ namespace polyfem
 					Eigen::MatrixXd curl_u = (vel_grad.col(1*dim+0) - vel_grad.col(0*dim+1)).cwiseProduct(da);
 					for (int i = 0; i < n_loc_pressure_bases; ++i) {
 						const auto &val = vals.basis_values[i];
-						if (!boundary_nodes_mask[val.global[0].index]) continue;
+						if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
 
 						Eigen::VectorXd n_cross_gradp = node_normals(val.global[0].index, 0) * val.grad_t_m.col(1) - node_normals(val.global[0].index, 1) * val.grad_t_m.col(0);
-                        rhs_(val.global[0].index) += viscosity_ * (curl_u.array() * n_cross_gradp.array()).sum() * val.global[0].val;
+						rhs_(val.global[0].index) += viscosity_ * (curl_u.array() * n_cross_gradp.array()).sum() * val.global[0].val;
 					}
 				}
 			};
@@ -536,28 +579,107 @@ namespace polyfem
 			auto set_pressure_neumann_bc_coef = [&](std::vector<Eigen::Triplet<double> >& coef) -> void {
 				ElementAssemblyValues vals;
 				for (int e = 0; e < n_el; e++) {
-                    if (iso_parametric())
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-                    else
-                        vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
+					if (iso_parametric())
+						vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
+					else
+						vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
 
-                    const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
-                    Eigen::MatrixXd quadrature_points = vals.quadrature.points;
+					const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
+					Eigen::MatrixXd quadrature_points = vals.quadrature.points;
 
 					const int n_loc_pressure_bases = int(vals.basis_values.size());
 					for (int i = 0; i < n_loc_pressure_bases; i++) {
 						const auto &val = vals.basis_values[i];
-						if (!boundary_nodes_mask[val.global[0].index]) continue;
+						if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
 
 						for (int j = 0; j < n_loc_pressure_bases; j++) {
 							const auto &val_ = vals.basis_values[j];
 
 							double tmp = 0;
 							for (int d = 0; d < dim; d++) {
-								Eigen::VectorXd derivative = val_.grad_t_m.col(d);
-								tmp += (val.val.array() * derivative.array() * da.array()).sum() * node_normals(val.global[0].index, d);
+								tmp += (val.val.array() * val_.grad_t_m.col(d).array() * da.array()).sum() * node_normals(val.global[0].index, d);
 							}
 							coef.emplace_back(val.global[0].index, val_.global[0].index, tmp);
+						}
+					}
+				}
+			};
+
+			auto set_pressure_neumann_bc_2 = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& dsol_dt, const double time, Eigen::VectorXd& rhs_) -> void {
+				Eigen::MatrixXd points, normals, uv;
+				Eigen::VectorXd weights;
+				Eigen::VectorXi global_primitive_ids;
+
+				ElementAssemblyValues vals;
+
+				for (const auto &lb : local_boundary) {
+					const int e = lb.element_id();
+					bool has_samples = rhs_assembler.boundary_quadrature(lb, args["n_boundary_samples"], false, uv, points, normals, weights, global_primitive_ids);
+
+					if (!has_samples)
+						continue;
+
+					const ElementBases &gbs = gbases[e];
+					const ElementBases &pbs = pressure_bases[e];
+					// const ElementBases &bs = bases[e];
+
+					vals.compute(e, mesh->is_volume(), points, pbs, gbs);
+
+					for (int n = 0; n < vals.jac_it.size(); ++n)
+					{
+						normals.row(n) = normals.row(n) * vals.jac_it[n];
+						normals.row(n).normalize();
+					}
+
+					Eigen::MatrixXd vel, vel_grad;
+					interpolate_at_local_vals(e, dim, bases, points, sol_c, vel, vel_grad);
+
+					Eigen::MatrixXd dvel_dt, dvel_dt_grad;
+					interpolate_at_local_vals(e, dim, bases, points, dsol_dt, dvel_dt, dvel_dt_grad);
+
+					Eigen::MatrixXd force;
+					AssemblerUtils assembler;
+					problem->rhs(assembler, formulation(), points, time, force);
+
+					Eigen::MatrixXd final_mat = -dvel_dt;
+					for (int d = 0; d < dim; ++d)
+						for (int d_ = 0; d_ < dim; ++d_)
+							final_mat.col(d) -= (vel.col(d_).array() * vel_grad.col(d * dim + d_).array()).matrix();
+					final_mat = force + final_mat;
+
+					Eigen::VectorXd final_vec(final_mat.rows()); final_vec.setZero();
+					for (int d = 0; d < dim; d++)
+						final_vec += (final_mat.col(d).array() * normals.col(d).array()).matrix();
+					final_vec = final_vec.array() * weights.array();
+
+					for (int i = 0; i < lb.size(); ++i)
+					{
+						const int primitive_global_id = lb.global_primitive_id(i);
+						const auto nodes = pbs.local_nodes_for_primitive(primitive_global_id, *mesh);
+
+						for (long n = 0; n < nodes.size(); ++n)
+						{
+							const AssemblyValues &v = vals.basis_values[nodes(n)];
+
+							assert(v.global.size() == 1);
+							rhs_(v.global[0].index) += (final_vec.array() * v.val.array()).sum() * v.global[0].val;
+						}
+					}
+
+					Eigen::VectorXd curl_u = vel_grad.col(1*dim+0) - vel_grad.col(0*dim+1);
+
+					for (int i = 0; i < lb.size(); ++i)
+					{
+						const int primitive_global_id = lb.global_primitive_id(i);
+						const auto nodes = pbs.local_nodes_for_primitive(primitive_global_id, *mesh);
+
+						for (long n = 0; n < nodes.size(); ++n)
+						{
+							const AssemblyValues &v = vals.basis_values[nodes(n)];
+
+							assert(v.global.size() == 1);
+							Eigen::VectorXd n_cross_gradp = normals.col(0).array() * v.grad_t_m.col(1).array() - normals.col(1).array() * v.grad_t_m.col(0).array();
+							rhs_(v.global[0].index) += viscosity_ * (curl_u.array() * n_cross_gradp.array() * weights.array()).sum() * v.global[0].val;
 						}
 					}
 				}
@@ -579,17 +701,17 @@ namespace polyfem
                 std::vector<Eigen::Triplet<double> > coefficients;
                 for(int i = 0; i < pressure_stiffness.outerSize(); i++)
                     for(StiffnessMatrix::InnerIterator it(pressure_stiffness,i); it; ++it)
-						if (!boundary_nodes_mask[it.row()])
+						if (!args["WABE"].get<bool>() || !pressure_boundary_nodes_mask[it.row()])
                         	coefficients.emplace_back(it.row(),it.col(),it.value());
 				
-				set_pressure_neumann_bc_coef(coefficients);
+				if (args["WABE"].get<bool>())
+					set_pressure_neumann_bc_coef(coefficients);
 
                 for (int i = 0; i < pressure_stiffness.rows(); i++)
                 {
                     coefficients.emplace_back(i, pressure_stiffness.rows(), integrals[i]);
                     coefficients.emplace_back(pressure_stiffness.rows(), i, integrals[i]);
                 }
-                // coefficients.emplace_back(pressure_stiffness.rows(), pressure_stiffness.rows(), 0);
 
                 StiffnessMatrix pressure_stiffness_tmp;
                 pressure_stiffness_tmp.resize(pressure_stiffness.rows()+1, pressure_stiffness.rows()+1);
@@ -599,77 +721,133 @@ namespace polyfem
                 prefactorize(*solver2, pressure_stiffness_tmp, std::vector<int>(), pressure_stiffness_tmp.rows());
             }
 
-			auto solve_pressure = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& sol_before, Eigen::MatrixXd& pressure_c) -> void {
+			auto solve_pressure = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& dsol_dt, const double time, Eigen::MatrixXd& pressure_c) -> void {
 				if (pressure_c.size() != n_pressure_bases) {
 					pressure_c.resize(n_pressure_bases, 1);
 					pressure_c.setZero();
 				}
 
-				const double alpha = 1. / min_edge_length / min_edge_length;
-
 				Eigen::VectorXd pressure_extended(n_pressure_bases+1, 1);
 				pressure_extended.block(0, 0, n_pressure_bases, 1) = pressure_c;
 				pressure_extended(n_pressure_bases) = 0;
-
-				Eigen::MatrixXd divU_p, gradU_gradUT_p;
-				assemble_divU_p(sol_c, divU_p);
-				assemble_gradU_gradUT_p(sol_c, gradU_gradUT_p);
 				
-				Eigen::VectorXd rhs_pressure(n_pressure_bases+1);
-				rhs_pressure.block(0, 0, n_pressure_bases, 1) = (-alpha) * divU_p + gradU_gradUT_p;
-				rhs_pressure(n_pressure_bases) = 0;
+				const double alpha = 1. / min_edge_length / min_edge_length;
+				Eigen::VectorXd rhs_pressure(n_pressure_bases);
+				rhs_pressure.setZero();
 
-				for (int i = 0; i < n_pressure_bases; i++)
-					if (boundary_nodes_mask[i])
-						rhs_pressure(i) = 0;
-				set_pressure_neumann_bc(sol_c, sol_before, dt, rhs_pressure);
+				// set_exact_pressure(time, pressure_c);
+				// for (int i = 0; i < pressure_bnd_nodes.size(); i++)
+					// rhs_pressure(pressure_bnd_nodes[i]) = pressure_c(pressure_bnd_nodes[i]);
+				assemble_rhs_pressure_1(sol_c, alpha, time, rhs_pressure);
+				if (args["WABE"].get<bool>()) {
+					for (int i = 0; i < pressure_bnd_nodes.size(); i++)
+						rhs_pressure(pressure_bnd_nodes[i]) = 0;
+					set_pressure_neumann_bc_1(sol_c, dsol_dt, time, rhs_pressure);
+				}
+				else
+					set_pressure_neumann_bc_2(sol_c, dsol_dt, time, rhs_pressure);
+				
+				rhs_pressure.conservativeResize(n_pressure_bases+1);
+				rhs_pressure(n_pressure_bases) = 0;
 
 				dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, std::vector<int>(), pressure_extended);
 				pressure_c = pressure_extended.block(0, 0, n_pressure_bases, 1);
 			};
 
+			Eigen::MatrixXd sol_n_1, sol_n = sol;
+			Eigen::MatrixXd rhs_n_1, rhs_n;
+			rhs_n_1.resize(0, 0);
+			assemble_velocity_rhs(sol, pressure, 0., rhs_n);
             for (int t = 1; t <= time_steps; t++)
             {
                 double time = t * dt;
                 logger().info("{}/{} steps, t={}s", t, time_steps, time);
 
-                auto sol_n = sol;
-            
-                // velocity prediction
-                Eigen::VectorXd rhs_vec;
-                AB.rhs(rhs_vec);
-                rhs = rhs_vec * dt + mass * sol;
+				sol_n_1 = sol_n;
+				sol_n = sol;
+				if (t == 1) {
+					set_exact_solution(time, sol);
+					set_exact_pressure(time, pressure);
+				}
+				else {
+					if (args.contains("only_solve_pressure") && args["only_solve_pressure"]) {
+						set_exact_solution(time, sol);
+						solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
+					}
+					else if (args.contains("only_solve_velocity") && args["only_solve_velocity"]) {
+						// velocity prediction
+						if (rhs_n_1.size() != rhs_n.size())
+							rhs = rhs_n * dt + mass * sol_n;
+						else
+							rhs = (1.5 * rhs_n - 0.5 * rhs_n_1) * dt + mass * sol_n;
 
-                rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
-				rhs_vec = rhs;
+						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+						Eigen::VectorXd rhs_vec = rhs;
 
-                Eigen::VectorXd sol_vec = sol;
-                dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
-                sol = sol_vec;
+						Eigen::VectorXd sol_vec = sol;
+						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+						sol = sol_vec;
 
-                // pressure update
-                solve_pressure(sol, sol_n, pressure);
-				// set_exact_pressure(time, pressure);
+						// pressure update
+						set_exact_pressure(time, pressure);
 
-                // velocity correction
-				assemble_velocity_rhs(sol, pressure, time, rhs);
-                rhs = mass * sol_n + (0.5*dt) * (rhs + rhs_n);
+						// velocity correction
+						Eigen::MatrixXd rhs_p;
+						assemble_velocity_rhs(sol, pressure, time, rhs_p);
+						rhs = mass * sol_n + (0.5*dt) * (rhs_p + rhs_n);
 
-                rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
-				rhs_vec = rhs;
-				
-				sol_vec = sol;
-                dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
-                sol = sol_vec;
-                
-                // pressure correction
-				solve_pressure(sol, sol_n, pressure);
-				// set_exact_pressure(time, pressure);
+						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+						rhs_vec = rhs;
+						
+						sol_vec = sol;
+						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+						sol = sol_vec;
+						
+						// pressure correction
+						set_exact_pressure(time, pressure);
+					}
+					else {
+						// velocity prediction
+						if (rhs_n_1.size() != rhs_n.size())
+							rhs = rhs_n * dt + mass * sol_n;
+						else
+							rhs = (1.5 * rhs_n - 0.5 * rhs_n_1) * dt + mass * sol_n;
+
+						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+						Eigen::VectorXd rhs_vec = rhs;
+
+						Eigen::VectorXd sol_vec = sol;
+						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+						sol = sol_vec;
+
+						// pressure update
+						solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
+						// solve_pressure(sol, (1.5*sol - 2*sol_n + 0.5*sol_n_1) / dt, time, pressure);
+						// set_exact_pressure(time, pressure);
+
+						// velocity correction
+						Eigen::MatrixXd rhs_p;
+						assemble_velocity_rhs(sol, pressure, time, rhs_p);
+						rhs = mass * sol_n + (0.5*dt) * (rhs_p + rhs_n);
+
+						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+						rhs_vec = rhs;
+						
+						sol_vec = sol;
+						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+						sol = sol_vec;
+						// set_exact_solution(time, sol);
+						
+						// pressure correction
+						solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
+						// solve_pressure(sol, (1.5*sol - 2*sol_n + 0.5*sol_n_1) / dt, time, pressure);
+						// set_exact_pressure(time, pressure);
+					}
+				}
 
                 // compute rhs
-				assemble_velocity_rhs(sol, pressure, time, rhs);
-                AB.new_solution(rhs);
-				rhs_n = rhs;
+				rhs_n_1 = rhs_n;
+				assemble_velocity_rhs(sol, pressure, time, rhs_n);
 
                 // check nan
                 for (int i = 0; i < sol.size(); i++) {
@@ -687,6 +865,9 @@ namespace polyfem
                     save_vtu(resolve_output_path(fmt::format("step_{:d}.vtu", t)), time);
                     // save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
                 }
+
+				if (args.contains("compute_error_time") && args["compute_error_time"])
+					compute_errors(time);
             }
 
         }
