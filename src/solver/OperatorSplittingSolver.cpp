@@ -343,11 +343,11 @@ const int order)
     const int n_vert = sol.size() / dim;
     std::vector<bool> traversed(n_vert, false);
 
-// #ifdef POLYFEM_WITH_TBB
-    // tbb::parallel_for(0, n_el, 1, [&](int e)
-// #else
+#ifdef POLYFEM_WITH_TBB
+    tbb::parallel_for(0, n_el, 1, [&](int e)
+#else
     for (int e = 0; e < n_el; ++e)
-// #endif
+#endif
     {
         // to compute global position with barycentric coordinate
         Eigen::MatrixXd mapped;
@@ -393,12 +393,13 @@ const int order)
             Eigen::MatrixXd local_pos;
             interpolator( gbases, bases, pos_, vel_, local_pos, sol);
 
-            new_sol.block(global * dim, 0, dim, 1) = vel_.transpose();
+            for (int d = 0; d < dim; d++)
+                new_sol(global * dim + d) = vel_(d);
         }
     }
-// #ifdef POLYFEM_WITH_TBB
-    // );
-// #endif
+#ifdef POLYFEM_WITH_TBB
+    );
+#endif
     sol.swap(new_sol);
 }
 
