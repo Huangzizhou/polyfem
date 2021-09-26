@@ -307,10 +307,10 @@ namespace polyfem
 			};
 
 			// initialization
-			set_exact_solution(0., sol);
-			set_exact_pressure(0., pressure);
-			// pressure.resize(n_pressure_bases, 1);
-			// pressure.setZero();
+			// set_exact_solution(0., sol);
+			// set_exact_pressure(0., pressure);
+			pressure.resize(n_pressure_bases, 1);
+			pressure.setZero();
 
 			auto assemble_rhs_pressure_1 = [&](const Eigen::MatrixXd& sol_c, const double alpha, const double time, Eigen::VectorXd& rhs_) -> void {
 				tbb::concurrent_vector<Eigen::Triplet<double> > nonzeros;
@@ -320,6 +320,7 @@ namespace polyfem
     			for (int e = 0; e < n_el; e++)
 #endif
 				{
+					// auto& vals = p_vals_list[e];
 					ElementAssemblyValues vals;
 					vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
 
@@ -463,8 +464,18 @@ namespace polyfem
                     const Eigen::VectorXd da = vals.det.array() * vals.quadrature.weights.array();
                     Eigen::MatrixXd quadrature_points = vals.quadrature.points;
 
-                    Eigen::MatrixXd vel, vel_grad;
-                    interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
+                    Eigen::MatrixXd vel(vals.val.rows(), dim), vel_grad(vals.val.rows(), dim*dim);
+					vel.setZero(); vel_grad.setZero();
+					const int n_loc_bases = int(vals.basis_values.size());
+					for (int i = 0; i < n_loc_bases; ++i) {
+                        const auto &val = vals.basis_values[i];
+
+						for (int d = 0; d < dim; d++) {
+							vel.col(d) += sol_c(val.global[0].index * dim + d) * val.val;
+							vel_grad.block(0, d * val.grad_t_m.cols(), vel_grad.rows(), val.grad_t_m.cols()) += sol_c(val.global[0].index * dim + d) * val.grad_t_m;
+						}
+					}
+                    // interpolate_at_local_vals(e, dim, bases, quadrature_points, sol_c, vel, vel_grad);
                     
                     // Eigen::MatrixXd pres, pres_grad;
                     // interpolate_at_local_vals(e, 1, pressure_bases, quadrature_points, pressure_c, pres, pres_grad);
@@ -477,7 +488,6 @@ namespace polyfem
 						final_mat.col(d) = (final_mat.col(d).array() * da.array()).matrix();
 					}
 
-                    const int n_loc_bases = int(vals.basis_values.size());
                     for (int i = 0; i < n_loc_bases; ++i) {
                         const auto &val = vals.basis_values[i];
                         assert(val.global.size() == 1);
@@ -835,48 +845,48 @@ namespace polyfem
 
 				sol_n_1 = sol_n;
 				sol_n = sol;
-				if (t == 1) {
-					set_exact_solution(time, sol);
-					set_exact_pressure(time, pressure);
-				}
-				else {
-					if (args.contains("only_solve_pressure") && args["only_solve_pressure"]) {
-						set_exact_solution(time, sol);
-						solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
-					}
-					else if (args.contains("only_solve_velocity") && args["only_solve_velocity"]) {
-						// velocity prediction
-						if (rhs_n_1.size() != rhs_n.size())
-							rhs = rhs_n * dt + mass * sol_n;
-						else
-							rhs = (1.5 * rhs_n - 0.5 * rhs_n_1) * dt + mass * sol_n;
+				// if (t == 1) {
+					// set_exact_solution(time, sol);
+					// set_exact_pressure(time, pressure);
+				// }
+				// else {
+					// if (args.contains("only_solve_pressure") && args["only_solve_pressure"]) {
+					// 	set_exact_solution(time, sol);
+					// 	solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
+					// }
+					// else if (args.contains("only_solve_velocity") && args["only_solve_velocity"]) {
+					// 	// velocity prediction
+					// 	if (rhs_n_1.size() != rhs_n.size())
+					// 		rhs = rhs_n * dt + mass * sol_n;
+					// 	else
+					// 		rhs = (1.5 * rhs_n - 0.5 * rhs_n_1) * dt + mass * sol_n;
 
-						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
-						Eigen::VectorXd rhs_vec = rhs;
+					// 	rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+					// 	Eigen::VectorXd rhs_vec = rhs;
 
-						Eigen::VectorXd sol_vec = sol;
-						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
-						sol = sol_vec;
+					// 	Eigen::VectorXd sol_vec = sol;
+					// 	dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+					// 	sol = sol_vec;
 
-						// pressure update
-						set_exact_pressure(time, pressure);
+					// 	// pressure update
+					// 	set_exact_pressure(time, pressure);
 
-						// velocity correction
-						Eigen::MatrixXd rhs_p;
-						assemble_velocity_rhs(sol, pressure, time, rhs_p);
-						rhs = mass * sol_n + (0.5*dt) * (rhs_p + rhs_n);
+					// 	// velocity correction
+					// 	Eigen::MatrixXd rhs_p;
+					// 	assemble_velocity_rhs(sol, pressure, time, rhs_p);
+					// 	rhs = mass * sol_n + (0.5*dt) * (rhs_p + rhs_n);
 
-						rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
-						rhs_vec = rhs;
+					// 	rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, rhs, time);
+					// 	rhs_vec = rhs;
 						
-						sol_vec = sol;
-						dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
-						sol = sol_vec;
+					// 	sol_vec = sol;
+					// 	dirichlet_solve_prefactorized(*solver1, mass, rhs_vec, boundary_nodes, sol_vec);
+					// 	sol = sol_vec;
 						
-						// pressure correction
-						set_exact_pressure(time, pressure);
-					}
-					else {
+					// 	// pressure correction
+					// 	set_exact_pressure(time, pressure);
+					// }
+					// else {
 						// velocity prediction
 						if (rhs_n_1.size() != rhs_n.size())
 							rhs = rhs_n * dt + mass * sol_n;
@@ -912,8 +922,8 @@ namespace polyfem
 						solve_pressure(sol, (sol - sol_n) / dt, time, pressure);
 						// solve_pressure(sol, (1.5*sol - 2*sol_n + 0.5*sol_n_1) / dt, time, pressure);
 						// set_exact_pressure(time, pressure);
-					}
-				}
+					// }
+				// }
 
                 // compute rhs
 				rhs_n_1 = rhs_n;
