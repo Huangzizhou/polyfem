@@ -111,7 +111,7 @@ namespace polyfem
             Eigen::VectorXd integrals;
             getPressureIntegral(integrals);
 
-            rhs.resize(n_bases * dim, 1);
+            rhs.resize(n_bases * dim, 1); rhs.setZero();
             Eigen::MatrixXd current_rhs = rhs;
 
             for (int t = 1; t <= time_steps; t++)
@@ -946,8 +946,8 @@ namespace polyfem
                     // save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
                 }
 
-				if (args.contains("compute_error_time") && args["compute_error_time"])
-					compute_errors(time);
+				// if (args.contains("compute_error_time") && args["compute_error_time"])
+					// compute_errors(time);
             }
 
         }
