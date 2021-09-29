@@ -322,6 +322,7 @@ namespace polyfem
 				}
 			};
 
+			// cache the ElementAssemblyValues for rhs assembly
 			std::vector<ElementAssemblyValues> valsP(n_el), valsV(n_el);
 #ifdef POLYFEM_WITH_TBB
     			tbb::parallel_for(0, n_el, 1, [&](int e)
@@ -337,6 +338,7 @@ namespace polyfem
     			);
 #endif
 
+			// cache the matrices used in pressure rhs assembly
 			std::vector<Eigen::MatrixXd> vel_cache(n_el), vel_grad_cache(n_el);
 			for (int e = 0; e < n_el; e++) {
 				vel_cache[e].resize(valsV[e].val.rows(), dim);
@@ -556,15 +558,14 @@ namespace polyfem
 				// v_rhs = v_rhs + force_rhs;
 			};
 
+			// compute normal per node for WABE
 			Eigen::MatrixXd node_normals(n_bases, dim);
 			node_normals.setZero();
-			{
-				// compute boundary edge normals
-				Eigen::MatrixXd edge_normals(mesh->n_edges(), dim);
+			if (dim == 2) {
+				Mesh2D &mesh2d = *dynamic_cast<Mesh2D *>(mesh.get());
+				Eigen::MatrixXd edge_normals(mesh2d.n_edges(), dim);
 				edge_normals.setZero();
 
-				assert(dim == 2);
-				Mesh2D &mesh2d = *dynamic_cast<Mesh2D *>(mesh.get());
 				for (const auto &lb : local_boundary)
 				{
 					const int e = lb.element_id();
@@ -634,6 +635,158 @@ namespace polyfem
 						node_normals.row(i) /= traverse_times(i);
 				}
 			}
+			else {
+				Mesh3D &mesh3d = *dynamic_cast<Mesh3D *>(mesh.get());
+				Eigen::MatrixXd face_normals(mesh3d.n_faces(), dim);
+				face_normals.setZero();
+
+				for (const auto &lb : local_boundary)
+				{
+					const int e = lb.element_id();
+					for (int i = 0; i < lb.size(); i++) {
+						const int face_id = lb.global_primitive_id(i);
+						const int v1 = mesh3d.face_vertex(face_id, 0);
+						const int v2 = mesh3d.face_vertex(face_id, 1);
+						const int v3 = mesh3d.face_vertex(face_id, 2);
+
+						Eigen::Vector3d edge1 = mesh3d.point(v2) - mesh3d.point(v1);
+						Eigen::Vector3d edge2 = mesh3d.point(v3) - mesh3d.point(v1);
+						RowVectorNd normal = edge1.cross(edge2);
+						normal.normalize();
+
+						// determine sign
+						RowVectorNd barycenter = 1./3 * (mesh3d.point(v1) + mesh3d.point(v2) + mesh3d.point(v3));
+						RowVectorNd fourth_point;
+						for (int fourth_id = 0; fourth_id < 4; fourth_id++) {
+							int fourth = mesh3d.cell_vertex(e, fourth_id);
+							if (fourth == v1 || fourth == v2 || fourth == v3) continue;
+							else fourth_point = mesh3d.point(fourth);
+						}
+						bool sign = (fourth_point - barycenter).dot(normal) > 0;
+						if (sign)
+							face_normals.row(face_id) = normal;
+						else
+							face_normals.row(face_id) = -normal;
+					}
+				}
+
+				Eigen::VectorXi traverse_times(n_bases); traverse_times.setZero();
+				for (const auto &lb : local_boundary)
+				{
+					ElementAssemblyValues vals;
+					const int e = lb.element_id();
+					vals.compute(e, mesh->is_volume(), pressure_bases[e], gbases[e]);
+
+					const int n_loc_pressure_bases = int(vals.basis_values.size());
+					const int node_per_edge = disc_orders[e] - 1, node_per_face = ((disc_orders[e] - 1) * (disc_orders[e] - 2)) / 2;
+					for (int i = 0; i < n_loc_pressure_bases; i++) {
+						const auto &val = vals.basis_values[i];
+						if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
+						int local_face_id = -1;
+						if (i < 4) {
+							switch(i) {
+								case 0:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 0 || lb[j] == 1 || lb[j] == 3) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 1:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 0 || lb[j] == 1 || lb[j] == 2) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 2:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 0 || lb[j] == 2 || lb[j] == 3) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 3:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 2 || lb[j] == 1 || lb[j] == 3) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+							}
+						}
+						else if (i < 4 + 6 * node_per_edge) {
+							const int edge = (i - 4) / node_per_edge;
+							switch(i) {
+								case 0:
+								case 1:
+								case 2:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 0 || lb[j] == (i+1)) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 3:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 1 || lb[j] == 3) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 4:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 1 || lb[j] == 2) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+								case 5:
+									for (int j = 0; j < lb.size(); j++) {
+										if (lb[j] == 2 || lb[j] == 3) {
+											local_face_id = j;
+											break;
+										}
+									}
+									break;
+							}
+						}
+						else if (i < 4 + 6 * node_per_edge + 4 * node_per_face) {
+							const int f = (i - 4 - 6 * node_per_edge) / node_per_face;
+							for (int j = 0; j < lb.size(); j++) {
+								if (lb[j] == f) {
+									local_face_id = j;
+									break;
+								}
+							}
+						}
+						else
+							continue;
+
+						node_normals.row(val.global[0].index) += face_normals.row(lb.global_primitive_id(local_face_id));
+						traverse_times(val.global[0].index)++;
+					}
+				}
+				for (int i = 0; i < n_bases; i++) {
+					if (traverse_times(i) > 1)
+						node_normals.row(i) /= traverse_times(i);
+				}
+			}
+
+			// for (int i = 0; i < n_bases; i++) {
+			// 	for (int d = 0; d < dim; d++) {
+			// 		sol(i * dim + d) = node_normals(i, d);
+			// 	}
+			// }
+			// save_vtu(resolve_output_path(fmt::format("step_{:d}.vtu", 1)), 0.);
+			// exit(0);
 
 			auto set_pressure_neumann_bc_1 = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& dsol_dt, const double time, Eigen::VectorXd& rhs_) -> void {
 				tbb::concurrent_vector<tuple> nonzeros;
@@ -677,8 +830,18 @@ namespace polyfem
 							for (int j = 0; j < final_mat.rows(); j++)
 								final_mat(j, d) *= -da(j);
 
+						Eigen::MatrixXd curl_u;
+						if (dim == 2) {
+							curl_u = (vel_grad.col(1*dim+0) - vel_grad.col(0*dim+1)).cwiseProduct(da);
+						}
+						else {
+							curl_u.resize(vel_grad.rows(), dim);
+							curl_u.col(0) = (vel_grad.col(2 * dim + 1) - vel_grad.col(1 * dim + 2)).cwiseProduct(da);
+							curl_u.col(1) = (vel_grad.col(0 * dim + 2) - vel_grad.col(2 * dim + 0)).cwiseProduct(da);
+							curl_u.col(2) = (vel_grad.col(1 * dim + 0) - vel_grad.col(0 * dim + 1)).cwiseProduct(da);
+						}
+
 						const int n_loc_pressure_bases = int(vals.basis_values.size());
-						Eigen::MatrixXd curl_u = (vel_grad.col(1*dim+0) - vel_grad.col(0*dim+1)).cwiseProduct(da);
 						for (int i = 0; i < n_loc_pressure_bases; ++i) {
 							const auto &val = vals.basis_values[i];
 							if (!pressure_boundary_nodes_mask[val.global[0].index]) continue;
@@ -686,8 +849,23 @@ namespace polyfem
 							for (int d = 0; d < dim; d++) {
 								value += (final_mat.col(d).array() * val.val.array()).sum() * node_normals(val.global[0].index, d) * val.global[0].val;
 							}
-							Eigen::VectorXd n_cross_gradp = node_normals(val.global[0].index, 0) * val.grad_t_m.col(1) - node_normals(val.global[0].index, 1) * val.grad_t_m.col(0);
-							value += viscosity_ * (curl_u.array() * n_cross_gradp.array()).sum() * val.global[0].val;
+
+							Eigen::MatrixXd n_cross_gradp;
+							if (dim == 2) {
+								n_cross_gradp = node_normals(val.global[0].index, 0) * val.grad_t_m.col(1) - node_normals(val.global[0].index, 1) * val.grad_t_m.col(0);
+							}
+							else {
+								n_cross_gradp.resize(val.grad_t_m.rows(), dim);
+								n_cross_gradp.col(0) = node_normals(val.global[0].index, 1) * val.grad_t_m.col(2) - node_normals(val.global[0].index, 2) * val.grad_t_m.col(1);
+								n_cross_gradp.col(1) = node_normals(val.global[0].index, 2) * val.grad_t_m.col(0) - node_normals(val.global[0].index, 0) * val.grad_t_m.col(2);
+								n_cross_gradp.col(2) = node_normals(val.global[0].index, 0) * val.grad_t_m.col(1) - node_normals(val.global[0].index, 1) * val.grad_t_m.col(0);
+							}
+
+							if (dim == 2)
+								value += viscosity_ * (curl_u.array() * n_cross_gradp.array()).sum() * val.global[0].val;
+							else
+								for (int d = 0; d < dim; d++)
+									value += viscosity_ * (curl_u.col(d).array() * n_cross_gradp.col(d).array()).sum() * val.global[0].val;
 							nonzeros.push_back(tuple(val.global[0].index, value));
 						}
 					}

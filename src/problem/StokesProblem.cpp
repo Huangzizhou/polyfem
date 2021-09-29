@@ -862,6 +862,7 @@ void TaylorGreenVortexProblem::exact_pressure(const Eigen::MatrixXd &pts, const 
 {
 	val.resize(pts.rows(), 1);
 	const double T = 6.283185307179586;
+	const double shift = 3./8 * exp(-2*viscosity_*t) * (2+sin(2)+2*exp(1)*(sin(1)-sin(3))+exp(2)*(-2-sin(2)+sin(4)));
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -870,6 +871,12 @@ void TaylorGreenVortexProblem::exact_pressure(const Eigen::MatrixXd &pts, const 
 		if(pts.cols() == 2)
 		{
 			val(i, 0) = -0.25*(cos(2*T*x)+cos(2*T*y))*exp(-4*viscosity_*T*T*t);
+		}
+		else
+		{
+			const double z = pts(i, 2);
+			val(i, 0) = -0.5*exp(-2*viscosity_*t)*(exp(2*x)+exp(2*y)+exp(2*z)+2*sin(x+y)*cos(x+z)*exp(y+z)+2*sin(y+z)*cos(x+y)*exp(x+z)+2*sin(x+z)*cos(y+z)*exp(x+y));
+			val(i, 0) -= shift;
 		}
 	}
 }
