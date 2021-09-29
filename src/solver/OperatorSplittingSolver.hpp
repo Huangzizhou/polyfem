@@ -95,5 +95,8 @@ namespace polyfem
         Eigen::VectorXd density;
         Eigen::VectorXi grid_cell_num;
         double resolution;
+
+        // cache
+        std::vector<ElementAssemblyValues> valsP;
     };
 }

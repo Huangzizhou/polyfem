@@ -1097,10 +1097,24 @@ Eigen::MatrixXd& sol)
     Eigen::VectorXd grad_pressure = Eigen::VectorXd::Zero(sol.size());
     Eigen::VectorXi traversed = Eigen::VectorXi::Zero(sol.size() / dim);
 
-    ElementAssemblyValues vals;
+    if (valsP.size() == 0) {
+        valsP.resize(n_el);
+#ifdef POLYFEM_WITH_TBB
+        tbb::parallel_for(0, n_el, 1, [&](int e)
+#else
+        for (int e = 0; e < n_el; e++)
+#endif
+        {
+            valsP[e].compute(e, dim == 3, local_pts, pressure_bases[e], gbases[e]);
+        }
+#ifdef POLYFEM_WITH_TBB
+        );
+#endif
+    }
+
     for (int e = 0; e < n_el; ++e)
     {
-        vals.compute(e, dim == 3, local_pts, pressure_bases[e], gbases[e]);
+        auto& vals = valsP[e];
         for (int j = 0; j < local_pts.rows(); j++)
         {
             const int global_ = bases[e].bases[j].global()[0].index;
@@ -1213,7 +1227,7 @@ Eigen::MatrixXd& local_pos)
     // }
     Eigen::MatrixXd res;
     int iter_times = 0;
-    int max_iter = 20;
+    int max_iter = 10;
     do
     {
         res = -pos;
