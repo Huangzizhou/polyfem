@@ -994,7 +994,9 @@ namespace polyfem
                 prefactorize(*solver1, A, boundary_nodes, A.rows());
             }
 
-            std::unique_ptr<polysolve::LinearSolver> solver2 = LinearSolver::create(args["solver_type"], args["precond_type"]);
+			if (!args.contains("pressure_solver_type"))
+				args["pressure_solver_type"] = args["solver_type"];
+            std::unique_ptr<polysolve::LinearSolver> solver2 = LinearSolver::create(args["pressure_solver_type"], args["precond_type"]);
             solver2->setParameters(params);
             {
                 Eigen::VectorXd integrals;
