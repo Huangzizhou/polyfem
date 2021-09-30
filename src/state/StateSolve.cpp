@@ -244,41 +244,41 @@ namespace polyfem
     			);
 #endif
 			};
-			auto set_exact_bc = [&](const double t, Eigen::MatrixXd& sol_c) -> void {
-				sol_c.resize(dim*n_bases, 1);
-				sol_c.setZero();
+// 			auto set_exact_bc = [&](const double t, Eigen::MatrixXd& sol_c) -> void {
+// 				sol_c.resize(dim*n_bases, 1);
+// 				sol_c.setZero();
 
-				std::vector<bool> flag(n_bases, false);
-				const int boundary_n_el = local_boundary.size();
-#ifdef POLYFEM_WITH_TBB
-    			tbb::parallel_for(0, boundary_n_el, 1, [&](int e_)
-#else
-    			for (int e_ = 0; e_ < boundary_n_el; e_++)
-#endif
-                {
-					const int e = local_boundary[e_].element_id();
-					ElementAssemblyValues vals;
-					vals.compute(e, mesh->is_volume(), local_pts, bases[e], gbases[e]);
+// 				std::vector<bool> flag(n_bases, false);
+// 				const int boundary_n_el = local_boundary.size();
+// #ifdef POLYFEM_WITH_TBB
+//     			tbb::parallel_for(0, boundary_n_el, 1, [&](int e_)
+// #else
+//     			for (int e_ = 0; e_ < boundary_n_el; e_++)
+// #endif
+//                 {
+// 					const int e = local_boundary[e_].element_id();
+// 					ElementAssemblyValues vals;
+// 					vals.compute(e, mesh->is_volume(), local_pts, bases[e], gbases[e]);
 
-					Eigen::MatrixXd vel_exact;
-                    problem->exact(vals.val, t, vel_exact);
+// 					Eigen::MatrixXd vel_exact;
+//                     problem->bc(vals.val, t, vel_exact);
 
-                    const int n_loc_bases = int(vals.basis_values.size());
-                    for (int i = 0; i < n_loc_bases; ++i) {
-						const auto &val = vals.basis_values[i];
-						assert(val.global.size() == 1);
-						if (bnd_nodes_mask[val.global[0].index] && !flag[val.global[0].index]) {
-							flag[val.global[0].index] = true;
-							for (int d = 0; d < dim; d++) {
-								sol_c(val.global[0].index * dim + d) = vel_exact(i, d);
-							}
-						}
-                    }
-                }
-#ifdef POLYFEM_WITH_TBB
-    			);
-#endif
-			};
+//                     const int n_loc_bases = int(vals.basis_values.size());
+//                     for (int i = 0; i < n_loc_bases; ++i) {
+// 						const auto &val = vals.basis_values[i];
+// 						assert(val.global.size() == 1);
+// 						if (bnd_nodes_mask[val.global[0].index] && !flag[val.global[0].index]) {
+// 							flag[val.global[0].index] = true;
+// 							for (int d = 0; d < dim; d++) {
+// 								sol_c(val.global[0].index * dim + d) = vel_exact(i, d);
+// 							}
+// 						}
+//                     }
+//                 }
+// #ifdef POLYFEM_WITH_TBB
+//     			);
+// #endif
+// 			};
 // 			auto set_exact_force = [&](const double t, Eigen::MatrixXd& F) -> void {
 // 				F.resize(dim*n_bases, 1);
 // 				F.setZero();
@@ -437,7 +437,7 @@ namespace polyfem
 #endif
                 rhs_.resize(n_pressure_bases, 1);
                 rhs_.setZero();
-				for (auto i = begin(nonzeros); i != end(nonzeros); i++) {
+				for (auto i = std::begin(nonzeros); i != std::end(nonzeros); i++) {
 					rhs_(i->idx) += i->val;
 				}
             };
@@ -582,7 +582,7 @@ namespace polyfem
 				for (int d = 0; d < dim; d++)
 #endif
 				{
-					for (auto i = begin(nonzeros[d]); i != end(nonzeros[d]); i++) {
+					for (auto i = std::begin(nonzeros[d]); i != std::end(nonzeros[d]); i++) {
 						v_rhs(i->idx * dim + d) += i->val;
 					}
 				}
@@ -1118,8 +1118,8 @@ namespace polyfem
 					rhs = (1.5 * rhs_n - 0.5 * rhs_n_1) * dt + mass * sol_n;
 
 				bc.setZero();
-				// rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, bc, time);
-				set_exact_bc(time, bc);
+				rhs_assembler.set_bc(local_boundary, boundary_nodes, args["n_boundary_samples"], local_neumann_boundary, bc, time);
+				// set_exact_bc(time, bc);
 
 				for (auto& bnode : boundary_nodes)
 					rhs(bnode) = bc(bnode);
