@@ -186,14 +186,14 @@ namespace polyfem
         }
         else {
 
-			std::vector<int> pressure_bnd_nodes;
-			pressure_bnd_nodes.reserve(pressure_boundary_nodes.size() / mesh->dimension());
-			for (auto node : pressure_boundary_nodes)
-			{
-				if (!(node % mesh->dimension()))
-					continue;
-				pressure_bnd_nodes.push_back(node / mesh->dimension());
-			}
+			std::vector<int> pressure_bnd_nodes = pressure_boundary_nodes;
+			// pressure_bnd_nodes.reserve(pressure_boundary_nodes.size() / mesh->dimension());
+			// for (auto node : pressure_boundary_nodes)
+			// {
+				// if (!(node % mesh->dimension()))
+					// continue;
+				// pressure_bnd_nodes.push_back(node / mesh->dimension());
+			// }
 
 			std::vector<bool> pressure_boundary_nodes_mask;
 			pressure_boundary_nodes_mask.assign(n_bases, false);
@@ -559,8 +559,9 @@ namespace polyfem
 			};
 
 			// compute normal per node for WABE
-			Eigen::MatrixXd node_normals(n_bases, dim);
+			Eigen::MatrixXd node_normals(n_pressure_bases, dim);
 			node_normals.setZero();
+			auto total_boundary = local_boundary;
 			if (dim == 2) {
 				Mesh2D &mesh2d = *dynamic_cast<Mesh2D *>(mesh.get());
 				Eigen::MatrixXd edge_normals(mesh2d.n_edges(), dim);
@@ -592,7 +593,7 @@ namespace polyfem
 					}
 				}
 
-				Eigen::VectorXi traverse_times(n_bases); traverse_times.setZero();
+				Eigen::VectorXi traverse_times(n_pressure_bases); traverse_times.setZero();
 				for (const auto &lb : local_boundary)
 				{
 					ElementAssemblyValues vals;
@@ -630,7 +631,7 @@ namespace polyfem
 						traverse_times(val.global[0].index)++;
 					}
 				}
-				for (int i = 0; i < n_bases; i++) {
+				for (int i = 0; i < n_pressure_bases; i++) {
 					if (traverse_times(i) > 1)
 						node_normals.row(i) /= traverse_times(i);
 				}
@@ -670,7 +671,7 @@ namespace polyfem
 					}
 				}
 
-				Eigen::VectorXi traverse_times(n_bases); traverse_times.setZero();
+				Eigen::VectorXi traverse_times(n_pressure_bases); traverse_times.setZero();
 				for (const auto &lb : local_boundary)
 				{
 					ElementAssemblyValues vals;
@@ -774,7 +775,7 @@ namespace polyfem
 						traverse_times(val.global[0].index)++;
 					}
 				}
-				for (int i = 0; i < n_bases; i++) {
+				for (int i = 0; i < n_pressure_bases; i++) {
 					if (traverse_times(i) > 1)
 						node_normals.row(i) /= traverse_times(i);
 				}
