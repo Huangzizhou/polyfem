@@ -1002,21 +1002,16 @@ namespace polyfem
 						for (long n = 0; n < nodes.size(); ++n)
 						{
 							const AssemblyValues &v = vals.basis_values[nodes(n)];
-							const double value1 = (final_vec.array() * v.val.array()).sum();
-							rhs_(v.global[0].index) += value1;
-							// std::cout << "value1 = " << value1 << ",";
+							rhs_(v.global[0].index) += (final_vec.array() * v.val.array()).sum();
 
 							Eigen::VectorXd n_cross_gradp = normals.col(0).array() * v.grad_t_m.col(1).array() - normals.col(1).array() * v.grad_t_m.col(0).array();
-							const double value2 = viscosity_ * (curl_u.array() * n_cross_gradp.array() * weights.array()).sum();
-							rhs_(v.global[0].index) += value2;
-							// std::cout << "value2 = " << value2 << ",";
+							rhs_(v.global[0].index) += viscosity_ * (curl_u.array() * n_cross_gradp.array() * weights.array()).sum();
 						}
 					}
 				}
 			};
 		
 			auto set_pressure_exact_neumann_bc = [&](const double time, Eigen::VectorXd& rhs_) -> void {
-				int edge_num = 0;
 				for (const auto &lb : local_pressure_boundary) {
 					const int e = lb.element_id();
 
@@ -1058,20 +1053,15 @@ namespace polyfem
 					{
 						const int primitive_global_id = lb.global_primitive_id(i);
 						const auto nodes = pbs.local_nodes_for_primitive(primitive_global_id, *mesh);
-						edge_num++;
 
 						for (long n = 0; n < nodes.size(); ++n)
 						{
 							const AssemblyValues &v = vals.basis_values[nodes(n)];
-							assert(v.global.size() == 1);
-							if (v.global[0].index == 1)
-								logger().info("debugging");
 							if (pressure_boundary_nodes_mask[v.global[0].index])
 								rhs_(v.global[0].index) += (dpdn.array() * v.val.array()).sum();
 						}
 					}
 				}
-				logger().info("edge number = {}",edge_num);
 			};
 
             std::unique_ptr<polysolve::LinearSolver> solver1 = LinearSolver::create(args["solver_type"], args["precond_type"]);
@@ -1125,7 +1115,9 @@ namespace polyfem
 				pressure_extended.block(0, 0, n_pressure_bases, 1) = pressure_c;
 				pressure_extended(n_pressure_bases) = 0;
 				
-				const double alpha = 1. / mesh_size / mesh_size;
+				double alpha = 0;
+				if (args.contains("divergence_damping") && args["divergence_damping"])
+					alpha = 1. / min_edge_length / min_edge_length;
 				Eigen::VectorXd rhs_pressure(n_pressure_bases);
 				rhs_pressure.setZero();
 
@@ -1142,18 +1134,11 @@ namespace polyfem
 						set_pressure_neumann_bc_1(sol_c, dsol_dt, time, rhs_pressure);
 					}
 					else {
-						// Eigen::VectorXd rhs1, rhs2;
-						// rhs1.setConstant(rhs_pressure.rows(), rhs_pressure.cols(), 0);
-						// rhs2.setConstant(rhs_pressure.rows(), rhs_pressure.cols(), 0);
-						// set_pressure_neumann_bc_2(sol_c, dsol_dt, time, rhs1);
-						set_pressure_exact_neumann_bc(time, rhs_pressure);
-						// Eigen::saveMarket(rhs1, "rhs1.mat");
-						// pressure = rhs1;
-						// save_vtu(resolve_output_path("debug.vtu"), 0);
-						// exit(0);
+						set_pressure_neumann_bc_2(sol_c, dsol_dt, time, rhs_pressure);
+						// set_pressure_exact_neumann_bc(time, rhs_pressure);
 					}
 				}
-				
+
 				rhs_pressure.conservativeResize(n_pressure_bases+1);
 				rhs_pressure(n_pressure_bases) = 0;
 
