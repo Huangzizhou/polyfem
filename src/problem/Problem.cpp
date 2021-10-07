@@ -247,8 +247,6 @@ namespace polyfem
 						  { return std::make_shared<TransientStokeProblemExact>("TransientStokeProblemExact"); });
 		problems_.emplace("Kovnaszy", []()
 						  { return std::make_shared<Kovnaszy>("Kovnaszy"); });
-		problems_.emplace("KovnaszyFake", []()
-						  { return std::make_shared<KovnaszyFake>("KovnaszyFake"); });
 		problems_.emplace("Airfoil", []()
 						  { return std::make_shared<Airfoil>("Airfoil"); });
 		problems_.emplace("Lshape", []()

@@ -390,100 +390,6 @@ void FlowWithObstacle::set_parameters(const json &params)
 	}
 }
 
-KovnaszyFake::KovnaszyFake(const std::string &name)
-	: Problem(name), viscosity_(0.1)
-{
-	neumann_boundary_ids_ = {1, 2, 3, 4};
-	boundary_ids_ = {7};
-	is_time_dependent_ = false;
-}
-
-void KovnaszyFake::initial_solution(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &pts, Eigen::MatrixXd &val) const
-{
-	exact(pts, 0, val);
-}
-
-void KovnaszyFake::set_parameters(const json &params)
-{
-	if (params.count("viscosity"))
-	{
-		viscosity_ = params["viscosity"];
-	}
-	if (params.find("time_dependent") != params.end())
-	{
-		is_time_dependent_ = params["time_dependent"];
-	}
-}
-
-void KovnaszyFake::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
-{
-	val.resize(pts.rows(), 1);
-	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
-	for(int i = 0; i < pts.rows(); ++i)
-	{
-		const double x = pts(i, 0);
-		const double y = pts(i, 1);
-
-		val(i, 0) = -exp(2*a*x)/2+(-1+exp(2*a))/4/a;
-	}
-}
-
-void KovnaszyFake::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
-{
-	val.resize(pts.rows(), pts.cols());
-	val.setZero();
-	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
-	for(int i = 0; i < pts.rows(); ++i)
-	{
-		const double x = pts(i, 0);
-		const double y = pts(i, 1);
-
-		val(i, 0) = -exp(2*a*x)*a;
-		val(i, 1) = 0;
-	}
-}
-
-void KovnaszyFake::rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
-{
-	val.resize(pts.rows(), 1);
-	val.setZero();
-	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
-	for(int i = 0; i < pts.rows(); ++i)
-	{
-		const double x = pts(i, 0);
-		const double y = pts(i, 1);
-
-		val(i, 0) = -2*a*a*exp(2*a*x);
-	}
-}
-
-void KovnaszyFake::neumann_bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const
-{
-	val.resize(pts.rows(), 1);
-	val.setZero();
-	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
-	for (long i = 0; i < pts.rows(); ++i)
-	{
-		const int id = mesh.get_boundary_id(global_ids(i));
-		const double x = pts(i, 0);
-		const double y = pts(i, 1);
-		if (id == 1)
-		{
-			val(i, 0) = exp(2*a*x)*a;
-		}
-		else if (id == 3)
-		{
-			val(i, 0) = -exp(2*a*x)*a;
-		}
-	}
-}
-
-void KovnaszyFake::bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
-{
-	// exact(pts, t, val);
-	val.setConstant(pts.rows(), 1, 0);
-}
-
 Kovnaszy::Kovnaszy(const std::string &name)
 	: Problem(name), viscosity_(1)
 {
@@ -916,6 +822,7 @@ TaylorGreenVortexProblem::TaylorGreenVortexProblem(const std::string &name)
 	: Problem(name), viscosity_(1)
 {
 	boundary_ids_ = {1, 2, 3, 4, 5, 6, 7};
+	neumann_boundary_ids_ = {};
 }
 
 void TaylorGreenVortexProblem::initial_solution(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &pts, Eigen::MatrixXd &val) const
@@ -934,7 +841,7 @@ void TaylorGreenVortexProblem::set_parameters(const json &params)
 void TaylorGreenVortexProblem::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols());
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for(int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -960,7 +867,7 @@ void TaylorGreenVortexProblem::exact(const Eigen::MatrixXd &pts, const double t,
 void TaylorGreenVortexProblem::exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), 1);
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	const double shift = 3./8 * exp(-2*viscosity_*t) * (2+sin(2)+2*exp(1)*(sin(1)-sin(3))+exp(2)*(-2-sin(2)+sin(4)));
 	for (int i = 0; i < pts.rows(); ++i)
 	{
@@ -983,7 +890,7 @@ void TaylorGreenVortexProblem::exact_pressure(const Eigen::MatrixXd &pts, const 
 void TaylorGreenVortexProblem::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols() * pts.cols());
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -1322,7 +1229,7 @@ void TransientStokeProblemExact::set_parameters(const json &params)
 void TransientStokeProblemExact::exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), 1);
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -1338,7 +1245,7 @@ void TransientStokeProblemExact::exact_pressure(const Eigen::MatrixXd &pts, cons
 void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols());
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -1370,7 +1277,7 @@ void TransientStokeProblemExact::exact(const Eigen::MatrixXd &pts, const double 
 void TransientStokeProblemExact::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols() * pts.cols());
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
@@ -1389,7 +1296,7 @@ void TransientStokeProblemExact::exact_grad(const Eigen::MatrixXd &pts, const do
 void TransientStokeProblemExact::rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
 {
 	val.resize(pts.rows(), pts.cols());
-	const double T = 6.283185307179586;
+	const double T = 2*M_PI;
 	for (int i = 0; i < pts.rows(); ++i)
 	{
 		const double x = pts(i, 0);
