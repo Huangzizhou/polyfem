@@ -599,9 +599,9 @@ namespace polyfem
 
 				v_rhs -= vgradp * pressure_c;
 				v_rhs -= stiffness * sol_c;
-				Eigen::MatrixXd force_rhs(v_rhs.rows(), v_rhs.cols()); force_rhs.setZero();
-				rhs_assembler.compute_energy_grad(local_boundary, boundary_nodes, density, args["n_boundary_samples"], local_neumann_boundary, v_rhs, time, force_rhs);
-				v_rhs = v_rhs + force_rhs;
+				// Eigen::MatrixXd force_rhs(v_rhs.rows(), v_rhs.cols()); force_rhs.setZero();
+				// rhs_assembler.compute_energy_grad(local_boundary, boundary_nodes, density, args["n_boundary_samples"], local_neumann_boundary, v_rhs, time, force_rhs);
+				// v_rhs = v_rhs + force_rhs;
 			};
 
 			// compute normal per node for WABE
@@ -1226,7 +1226,7 @@ namespace polyfem
                     // save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
                 }
 
-				if (args.contains("only_pressure") || (args.contains("compute_error_time") && args["compute_error_time"]))
+				if ((args.contains("only_pressure") && args["only_pressure"]) || (args.contains("compute_error_time") && args["compute_error_time"]))
 					compute_errors(time);
             }
 
