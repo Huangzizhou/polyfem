@@ -23,7 +23,7 @@ namespace polyfem
 	{
 	}
 
-	void Problem::setup_bc(const Mesh &mesh, const std::vector<ElementBases> &bases, const std::vector<ElementBases> &pressure_bases, std::vector<LocalBoundary> &local_boundary, std::vector<int> &boundary_nodes, std::vector<LocalBoundary> &local_neumann_boundary, std::vector<int> &pressure_dirichlet_boundary_nodes, std::vector<int> &pressure_boundary_nodes)
+	void Problem::setup_bc(const Mesh &mesh, const std::vector<ElementBases> &bases, const std::vector<ElementBases> &pressure_bases, std::vector<LocalBoundary> &local_boundary, std::vector<int> &boundary_nodes, std::vector<LocalBoundary> &local_neumann_boundary, std::vector<int> &pressure_dirichlet_boundary_nodes, std::vector<LocalBoundary> &local_pressure_boundary, std::vector<int> &pressure_boundary_nodes, bool is_splitting)
 	{
 		std::vector<LocalBoundary> new_local_boundary;
 		std::vector<LocalBoundary> new_local_pressure_boundary;
@@ -50,7 +50,7 @@ namespace polyfem
 					new_neumann_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 				if (std::find(pressure_boundary_ids_.begin(), pressure_boundary_ids_.end(), tag) != pressure_boundary_ids_.end())
 					new_neumann_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
-				if (std::find(splitting2_pressure_boundary_ids_.begin(), splitting2_pressure_boundary_ids_.end(), tag) != splitting2_pressure_boundary_ids_.end())
+				if (is_splitting)
 					new_pressure_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 			}
 
@@ -65,6 +65,9 @@ namespace polyfem
 		}
 		local_boundary.clear();
 		std::swap(local_boundary, new_local_boundary);
+
+		local_pressure_boundary.clear();
+		std::swap(local_pressure_boundary, new_local_pressure_boundary);
 
 		boundary_nodes.clear();
 		pressure_boundary_nodes.clear();
@@ -97,7 +100,7 @@ namespace polyfem
 			}
 		}
 
-		for (auto it = new_local_pressure_boundary.begin(); it != new_local_pressure_boundary.end(); ++it)
+		for (auto it = local_pressure_boundary.begin(); it != local_pressure_boundary.end(); ++it)
 		{
 			const auto &lb = *it;
 			const auto &b = pressure_bases[lb.element_id()];
@@ -244,6 +247,8 @@ namespace polyfem
 						  { return std::make_shared<TransientStokeProblemExact>("TransientStokeProblemExact"); });
 		problems_.emplace("Kovnaszy", []()
 						  { return std::make_shared<Kovnaszy>("Kovnaszy"); });
+		problems_.emplace("KovnaszyFake", []()
+						  { return std::make_shared<KovnaszyFake>("KovnaszyFake"); });
 		problems_.emplace("Airfoil", []()
 						  { return std::make_shared<Airfoil>("Airfoil"); });
 		problems_.emplace("Lshape", []()

@@ -491,7 +491,7 @@ namespace polyfem
 		logger().info("Done!");
 
 		const int prev_b_size = local_boundary.size();
-		problem->setup_bc(*mesh, bases, pressure_bases, local_boundary, boundary_nodes, local_neumann_boundary, pressure_dirichlet_boundary_nodes, pressure_boundary_nodes);
+		problem->setup_bc(*mesh, bases, pressure_bases, local_boundary, boundary_nodes, local_neumann_boundary, pressure_dirichlet_boundary_nodes, local_pressure_boundary, pressure_boundary_nodes, formulation() == "OperatorSplitting");
 		args["has_neumann"] = local_neumann_boundary.size() > 0 || local_boundary.size() < prev_b_size;
 		use_avg_pressure = !args["has_neumann"];
 
@@ -1218,10 +1218,12 @@ namespace polyfem
 			// errors.push_back(err(i));
 
 			linf_err = max(linf_err, err.maxCoeff());
-			u_linf_err = max(u_linf_err, err_.col(0).maxCoeff());
-			v_linf_err = max(v_linf_err, err_.col(1).maxCoeff());
 			grad_max_err = max(linf_err, err_grad.maxCoeff());
-			div_linf_err = max(div_linf_err, err_div.maxCoeff());
+			if (formulation() == "OperatorSplitting") {
+				u_linf_err = max(u_linf_err, err_.col(0).maxCoeff());
+				v_linf_err = max(v_linf_err, err_.col(1).maxCoeff());
+				div_linf_err = max(div_linf_err, err_div.maxCoeff());
+			}
 
 			// {
 			// 	const auto &mesh3d = *dynamic_cast<Mesh3D *>(mesh.get());
@@ -1264,9 +1266,11 @@ namespace polyfem
 			// }
 
 			l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
-			u_l2_err += (err_.col(0).array() * err_.col(0).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
-			v_l2_err += (err_.col(1).array() * err_.col(1).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
-			div_l2_err += (err_div.array() * err_div.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			if (formulation() == "OperatorSplitting") {
+				u_l2_err += (err_.col(0).array() * err_.col(0).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+				v_l2_err += (err_.col(1).array() * err_.col(1).array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+				div_l2_err += (err_div.array() * err_div.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
+			}
 			h1_err += (err_grad.array() * err_grad.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 			lp_err += (err.array().pow(p) * vals.det.array() * vals.quadrature.weights.array()).sum();
 		}
@@ -1274,33 +1278,35 @@ namespace polyfem
 		double p_l2_err = 0;
 		double p_linf_err = 0;
 
-		for (int e = 0; e < n_el; ++e)
-		{
-			if (iso_parametric())
-				vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
-			else
-				vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
-
-			if (problem->has_exact_sol())
-				problem->exact_pressure(vals.val, tend, p_exact);
-
-			p_approx.resize(vals.val.rows(), 1);
-			p_approx.setZero();
-
-			const int n_loc_bases = int(vals.basis_values.size());
-
-			for (int i = 0; i < n_loc_bases; ++i)
+		if (formulation() == "OperatorSplitting") {
+			for (int e = 0; e < n_el; ++e)
 			{
-				const auto &val = vals.basis_values[i];
+				if (iso_parametric())
+					vals.compute(e, mesh->is_volume(), pressure_bases[e], bases[e]);
+				else
+					vals.compute(e, mesh->is_volume(), pressure_bases[e], geom_bases[e]);
 
-				for (size_t ii = 0; ii < val.global.size(); ++ii)
-					p_approx += val.global[ii].val * pressure(val.global[ii].index) * val.val;
+				if (problem->has_exact_sol())
+					problem->exact_pressure(vals.val, tend, p_exact);
+
+				p_approx.resize(vals.val.rows(), 1);
+				p_approx.setZero();
+
+				const int n_loc_bases = int(vals.basis_values.size());
+
+				for (int i = 0; i < n_loc_bases; ++i)
+				{
+					const auto &val = vals.basis_values[i];
+
+					for (size_t ii = 0; ii < val.global.size(); ++ii)
+						p_approx += val.global[ii].val * pressure(val.global[ii].index) * val.val;
+				}
+
+				const auto err = problem->has_exact_sol() ? (p_exact - p_approx).eval().cwiseAbs().eval() : (p_approx).eval().cwiseAbs().eval();
+
+				p_linf_err = max(p_linf_err, err.maxCoeff());
+				p_l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 			}
-
-			const auto err = problem->has_exact_sol() ? (p_exact - p_approx).eval().cwiseAbs().eval() : (p_approx).eval().cwiseAbs().eval();
-
-			p_linf_err = max(p_linf_err, err.maxCoeff());
-			p_l2_err += (err.array() * err.array() * vals.det.array() * vals.quadrature.weights.array()).sum();
 		}
 
 		h1_semi_err = sqrt(fabs(h1_err));

@@ -1039,8 +1039,10 @@ namespace polyfem
 			problem->exact(points, t, exact_fun);
 			err = (fun - exact_fun).eval().rowwise().norm();
 
-			problem->exact_pressure(points, t, exact_pre);
-			err_pre = (pre - exact_pre).eval().rowwise().norm();
+			if (formulation() == "OperatorSplitting") {
+				problem->exact_pressure(points, t, exact_pre);
+				err_pre = (pre - exact_pre).eval().rowwise().norm();
+			}
 		}
 
 		VTUWriter writer;
@@ -1077,9 +1079,11 @@ namespace polyfem
 			if (solve_export_to_file)
 			{
 				writer.add_field("exact", exact_fun);
-				writer.add_field("exact_pressure", exact_pre);
 				writer.add_field("error", err);
-				writer.add_field("error_pressure", err_pre);
+				if (formulation() == "OperatorSplitting") {
+					writer.add_field("error_pressure", err_pre);
+					writer.add_field("exact_pressure", exact_pre);
+				}
 			}
 			else
 			{

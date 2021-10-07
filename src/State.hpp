@@ -124,6 +124,7 @@ namespace polyfem
 		std::vector<LocalBoundary> local_boundary;
 		//mapping from elements to nodes for neumann boundary conditions
 		std::vector<LocalBoundary> local_neumann_boundary;
+		std::vector<LocalBoundary> local_pressure_boundary;
 		//nodes on the boundary of polygonal elements, used for harmonic bases
 		std::map<int, InterfaceData> poly_edge_to_data;
 

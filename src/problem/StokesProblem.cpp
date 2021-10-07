@@ -390,6 +390,100 @@ void FlowWithObstacle::set_parameters(const json &params)
 	}
 }
 
+KovnaszyFake::KovnaszyFake(const std::string &name)
+	: Problem(name), viscosity_(0.1)
+{
+	neumann_boundary_ids_ = {1, 2, 3, 4};
+	boundary_ids_ = {7};
+	is_time_dependent_ = false;
+}
+
+void KovnaszyFake::initial_solution(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &pts, Eigen::MatrixXd &val) const
+{
+	exact(pts, 0, val);
+}
+
+void KovnaszyFake::set_parameters(const json &params)
+{
+	if (params.count("viscosity"))
+	{
+		viscosity_ = params["viscosity"];
+	}
+	if (params.find("time_dependent") != params.end())
+	{
+		is_time_dependent_ = params["time_dependent"];
+	}
+}
+
+void KovnaszyFake::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), 1);
+	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
+	for(int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		val(i, 0) = -exp(2*a*x)/2+(-1+exp(2*a))/4/a;
+	}
+}
+
+void KovnaszyFake::exact_grad(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), pts.cols());
+	val.setZero();
+	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
+	for(int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		val(i, 0) = -exp(2*a*x)*a;
+		val(i, 1) = 0;
+	}
+}
+
+void KovnaszyFake::rhs(const AssemblerUtils &assembler, const std::string &formulation, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), 1);
+	val.setZero();
+	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
+	for(int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		val(i, 0) = -2*a*a*exp(2*a*x);
+	}
+}
+
+void KovnaszyFake::neumann_bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), 1);
+	val.setZero();
+	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
+	for (long i = 0; i < pts.rows(); ++i)
+	{
+		const int id = mesh.get_boundary_id(global_ids(i));
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+		if (id == 1)
+		{
+			val(i, 0) = exp(2*a*x)*a;
+		}
+		else if (id == 3)
+		{
+			val(i, 0) = -exp(2*a*x)*a;
+		}
+	}
+}
+
+void KovnaszyFake::bc(const Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	// exact(pts, t, val);
+	val.setConstant(pts.rows(), 1, 0);
+}
+
 Kovnaszy::Kovnaszy(const std::string &name)
 	: Problem(name), viscosity_(1)
 {
@@ -423,17 +517,22 @@ void Kovnaszy::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd
 		const double x = pts(i, 0);
 		const double y = pts(i, 1);
 
-		if(pts.cols() == 2)
-		{
-			val(i, 0) = 1 - exp(a*x)*cos(2*M_PI*y);
-			val(i, 1) = a*exp(a*x)*sin(2*M_PI*y)/(2*M_PI);
-		}
-		else
-		{
-			val(i, 0) = 1 - exp(a*x)*cos(2*M_PI*y);
-			val(i, 1) = a*exp(a*x)*sin(2*M_PI*y)/(2*M_PI);
-			val(i, 2) = 0;
-		}
+		val(i, 0) = 1 - exp(a*x)*cos(2*M_PI*y);
+		val(i, 1) = a*exp(a*x)*sin(2*M_PI*y)/(2*M_PI);
+	}
+}
+
+void Kovnaszy::exact_pressure(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
+{
+	val.resize(pts.rows(), 1);
+	const double a = 0.5 / viscosity_ - sqrt(0.25 / viscosity_ / viscosity_ + 4 * M_PI * M_PI);
+	const double shift = (1 - exp(2*a)) / (4*a);
+	for (int i = 0; i < pts.rows(); ++i)
+	{
+		const double x = pts(i, 0);
+		const double y = pts(i, 1);
+
+		val(i, 0) = -exp(2*a*x) / 2 - shift;
 	}
 }
 
