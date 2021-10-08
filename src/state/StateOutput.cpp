@@ -968,7 +968,6 @@ namespace polyfem
 		build_vis_mesh(points, tets, el_id, discr);
 
 		Eigen::MatrixXd fun, exact_fun, err;
-		Eigen::MatrixXd pre, exact_pre, err_pre;
 		const bool boundary_only = args["export"]["vis_boundary_only"];
 		const bool material_params = args["export"]["material_params"];
 		const bool body_ids = args["export"]["body_ids"];
@@ -1032,17 +1031,11 @@ namespace polyfem
 		}
 
 		interpolate_function(points.rows(), sol, fun, boundary_only);
-		interpolate_function(points.rows(), 1, pressure_bases, pressure, pre, boundary_only);
 
 		if (problem->has_exact_sol())
 		{
 			problem->exact(points, t, exact_fun);
 			err = (fun - exact_fun).eval().rowwise().norm();
-
-			if (formulation() == "OperatorSplitting") {
-				problem->exact_pressure(points, t, exact_pre);
-				err_pre = (pre - exact_pre).eval().rowwise().norm();
-			}
 		}
 
 		VTUWriter writer;
@@ -1080,10 +1073,6 @@ namespace polyfem
 			{
 				writer.add_field("exact", exact_fun);
 				writer.add_field("error", err);
-				if (formulation() == "OperatorSplitting") {
-					writer.add_field("error_pressure", err_pre);
-					writer.add_field("exact_pressure", exact_pre);
-				}
 			}
 			else
 			{

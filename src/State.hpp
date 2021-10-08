@@ -351,7 +351,6 @@ namespace polyfem
 
 		//compute the errors, not part of solve
 		void compute_errors();
-		void compute_errors(const double time);
 		//saves all data on the disk according to the input params
 		void export_data();
 		//compute pressure integrals

@@ -816,9 +816,6 @@ namespace polyfem
                     save_vtu(resolve_output_path(fmt::format("step_{:d}.vtu", t)), time);
                     // save_wire(resolve_output_path(fmt::format("step_{:d}.obj", t)));
                 }
-
-				if ((args.contains("only_pressure") && args["only_pressure"]) || (args.contains("compute_error_time") && args["compute_error_time"]))
-					compute_errors(time);
             }
 
         }
