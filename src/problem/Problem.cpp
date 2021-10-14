@@ -50,8 +50,12 @@ namespace polyfem
 					new_neumann_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 				if (std::find(pressure_boundary_ids_.begin(), pressure_boundary_ids_.end(), tag) != pressure_boundary_ids_.end())
 					new_neumann_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
-				if (is_splitting)
-					new_pressure_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
+				if (is_splitting) {
+					if (std::find(neumann_boundary_ids_.begin(), neumann_boundary_ids_.end(), tag) != neumann_boundary_ids_.end())
+						new_pressure_dirichlet_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
+					else
+						new_pressure_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
+				}
 			}
 
 			if (!new_lb.empty())

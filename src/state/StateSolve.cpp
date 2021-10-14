@@ -192,10 +192,13 @@ namespace polyfem
         }
         else {
 
-			std::vector<bool> pressure_boundary_nodes_mask;
+			std::vector<bool> pressure_boundary_nodes_mask, pressure_dirichlet_nodes_mask;
 			pressure_boundary_nodes_mask.assign(n_pressure_bases, false);
+			pressure_dirichlet_nodes_mask = pressure_boundary_nodes_mask;
 			for (auto node : pressure_boundary_nodes)
 				pressure_boundary_nodes_mask[node] = true;
+			for (auto node : pressure_dirichlet_boundary_nodes)
+				pressure_dirichlet_nodes_mask[node] = true;
 
             // coefficient matrix of viscosity
             assembler.assemble_problem("Stokes", mesh->is_volume(), n_bases, bases, gbases, ass_vals_cache, stiffness);
@@ -702,7 +705,7 @@ namespace polyfem
 				if (args.contains("dirichlet") && args["dirichlet"])
 					prefactorize(*solver2, pressure_stiffness_tmp, pressure_boundary_nodes, pressure_stiffness_tmp.rows());
 				else
-                	prefactorize(*solver2, pressure_stiffness_tmp, std::vector<int>(), pressure_stiffness_tmp.rows());
+                	prefactorize(*solver2, pressure_stiffness_tmp, pressure_dirichlet_boundary_nodes, pressure_stiffness_tmp.rows());
             }
 
 			auto solve_pressure = [&](const Eigen::MatrixXd& sol_c, const Eigen::MatrixXd& dsol_dt, const double time, Eigen::MatrixXd& pressure_c) -> void {
@@ -730,13 +733,16 @@ namespace polyfem
 				else
 					set_pressure_neumann_bc(sol_c, dsol_dt, time, rhs_pressure);
 
+				for (auto node : pressure_dirichlet_boundary_nodes)
+					rhs_pressure(node) = 0;
+
 				rhs_pressure.conservativeResize(n_pressure_bases+1);
 				rhs_pressure(n_pressure_bases) = 0;
 
 				if (args.contains("dirichlet") && args["dirichlet"])
 					dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, pressure_boundary_nodes, pressure_extended);
 				else
-					dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, std::vector<int>(), pressure_extended);
+					dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, pressure_dirichlet_boundary_nodes, pressure_extended);
 				pressure_c = pressure_extended.block(0, 0, n_pressure_bases, 1);
 			};
 
