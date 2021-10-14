@@ -711,24 +711,28 @@ namespace polyfem
             std::unique_ptr<polysolve::LinearSolver> solver2 = LinearSolver::create(args["pressure_solver_type"], args["precond_type"]);
             solver2->setParameters(params);
             {
-                Eigen::VectorXd integrals;
-                getPressureIntegral(integrals);
+				StiffnessMatrix pressure_stiffness_tmp;
+				if (pressure_dirichlet_boundary_nodes.size() == 0) {
+					Eigen::VectorXd integrals;
+					getPressureIntegral(integrals);
 
-                std::vector<Eigen::Triplet<double> > coefficients;
-                for(int i = 0; i < pressure_stiffness.outerSize(); i++)
-                    for(StiffnessMatrix::InnerIterator it(pressure_stiffness,i); it; ++it)
-                        	coefficients.emplace_back(it.row(),it.col(),it.value());
+					std::vector<Eigen::Triplet<double> > coefficients;
+					for(int i = 0; i < pressure_stiffness.outerSize(); i++)
+						for(StiffnessMatrix::InnerIterator it(pressure_stiffness,i); it; ++it)
+								coefficients.emplace_back(it.row(),it.col(),it.value());
 
-                for (int i = 0; i < pressure_stiffness.rows(); i++)
-                {
-                    coefficients.emplace_back(i, pressure_stiffness.rows(), integrals[i]);
-                    coefficients.emplace_back(pressure_stiffness.rows(), i, integrals[i]);
-                }
+					for (int i = 0; i < pressure_stiffness.rows(); i++)
+					{
+						coefficients.emplace_back(i, pressure_stiffness.rows(), integrals[i]);
+						coefficients.emplace_back(pressure_stiffness.rows(), i, integrals[i]);
+					}
 
-                StiffnessMatrix pressure_stiffness_tmp;
-                pressure_stiffness_tmp.resize(pressure_stiffness.rows()+1, pressure_stiffness.rows()+1);
-                pressure_stiffness_tmp.setFromTriplets(coefficients.begin(), coefficients.end());
-                pressure_stiffness = pressure_stiffness_tmp;
+					pressure_stiffness_tmp.resize(pressure_stiffness.rows()+1, pressure_stiffness.rows()+1);
+					pressure_stiffness_tmp.setFromTriplets(coefficients.begin(), coefficients.end());
+					pressure_stiffness = pressure_stiffness_tmp;
+				}
+				else
+					pressure_stiffness_tmp = pressure_stiffness;
 				
 				if (args.contains("dirichlet") && args["dirichlet"])
 					prefactorize(*solver2, pressure_stiffness_tmp, pressure_boundary_nodes, pressure_stiffness_tmp.rows());
@@ -742,9 +746,9 @@ namespace polyfem
 					pressure_c.setZero();
 				}
 
-				Eigen::VectorXd pressure_extended(n_pressure_bases+1, 1);
+				Eigen::VectorXd pressure_extended(n_pressure_bases + (pressure_dirichlet_boundary_nodes.size() == 0), 1);
+				pressure_extended.setZero();
 				pressure_extended.block(0, 0, n_pressure_bases, 1) = pressure_c;
-				pressure_extended(n_pressure_bases) = 0;
 				
 				double alpha = 0;
 				if (args.contains("divergence_damping") && args["divergence_damping"])
@@ -764,13 +768,16 @@ namespace polyfem
 				for (auto node : pressure_dirichlet_boundary_nodes)
 					rhs_pressure(node) = 0;
 
-				rhs_pressure.conservativeResize(n_pressure_bases+1);
-				rhs_pressure(n_pressure_bases) = 0;
+				if (pressure_dirichlet_boundary_nodes.size() == 0) {
+					rhs_pressure.conservativeResize(n_pressure_bases+1);
+					rhs_pressure(n_pressure_bases) = 0;
+				}
 
 				if (args.contains("dirichlet") && args["dirichlet"])
 					dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, pressure_boundary_nodes, pressure_extended);
 				else
 					dirichlet_solve_prefactorized(*solver2, pressure_stiffness, rhs_pressure, pressure_dirichlet_boundary_nodes, pressure_extended);
+				
 				pressure_c = pressure_extended.block(0, 0, n_pressure_bases, 1);
 			};
 
