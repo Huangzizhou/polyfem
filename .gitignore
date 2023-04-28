@@ -1,0 +1,86 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Matlab
+*.m~
+*.mat
+
+# Python cache
+__pycache__
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Mesh files
+*.obj
+*.off
+*.ply
+*.msh
+*.mesh
+*.vtk
+*.HYBRID
+*.sol
+
+# Extra directories
+*.sublime-project
+*.code-workspace
+.vscode/
+.idea/
+build/
+cmake-build-*/
+bin*
+bin_rel*
+bin.nosync
+build*
+xcode*
+3rdparty*
+/data
+/.*
+
+.DS_STORE
+
+# Plotting temporary files
+python/plot.html
+python/temp-plot.html
+
+# Rhs temporary files
+# src/autogen/auto_elasticity_rhs.cpp
+# src/autogen/auto_elasticity_rhs.hpp
+# src/autogen/auto_eigs.cpp
+# src/autogen/auto_eigs.hpp
+# src/autogen/auto_q_bases.cpp
+# src/autogen/auto_q_bases.hpp
+# src/autogen/auto_p_bases.cpp
+# src/autogen/auto_p_bases.hpp
+
+PolyFEMOptions.cmake
+.cache/
+docs/html
+
+result
